@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import {
-  Code, Terminal, GitBranch, LayoutPanelLeft, Search, Bug, Files, ChevronRight, Zap, Settings,
+  Code, Terminal, GitBranch, LayoutPanelLeft, Search, Bug, Files, ChevronRight, Zap, Settings, Wrench,
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import TerminalPanel, { type OsTheme } from "./TerminalPanel";
 import { usePersistedState } from "./usePersistedState";
 import { languageForFilename } from "./languages";
 import { SAMPLE_FILES } from "./sampleFiles";
+import ToolsPanel from "./ToolsPanel";
 import "./App.css";
 
 type Layout = "stacked" | "side-by-side";
@@ -31,7 +32,12 @@ function App() {
   const fileNames = Object.keys(buffers);
   // A persisted activeFile can name a buffer that no longer exists.
   const currentFile =
-    activeFile === "Settings" || fileNames.includes(activeFile) ? activeFile : (fileNames[0] ?? "Settings");
+    activeFile === "Settings" || activeFile === "Tools" || fileNames.includes(activeFile)
+      ? activeFile
+      : (fileNames[0] ?? "Settings");
+
+  // The buffer the Tools panel reads and writes: the last real file opened.
+  const toolTarget = fileNames.includes(activeFile) ? activeFile : (fileNames[0] ?? "");
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -55,6 +61,16 @@ function App() {
   }, [osTheme]);
 
   const renderEditorContent = () => {
+    if (currentFile === "Tools") {
+      return (
+        <ToolsPanel
+          fileName={toolTarget}
+          buffer={buffers[toolTarget] ?? ""}
+          onApplyToBuffer={(next) => setBuffers({ ...buffers, [toolTarget]: next })}
+        />
+      );
+    }
+
     if (currentFile === "Settings") {
       return (
         <div className="preferences-ui">
@@ -143,6 +159,9 @@ function App() {
               <div className="cp-item" onClick={() => { setShowCommandPalette(false); }}>
                 <span>Preferences: Open Keyboard Shortcuts</span> <span className="cp-shortcut">⌘K ⌘S</span>
               </div>
+              <div className="cp-item" onClick={() => { setActiveFile("Tools"); setShowCommandPalette(false); }}>
+                <span>Developer: Open Tools (regex, base64, subnet, timestamps)</span>
+              </div>
               <div className="cp-item" onClick={() => { setPairProgrammingOn(!pairProgrammingOn); setShowCommandPalette(false); }}>
                 <span>AI: Toggle Code With Me (Pair Programming)</span>
               </div>
@@ -169,6 +188,11 @@ function App() {
           <GitBranch className={`activity-icon ${activePanel === "git" ? "active" : ""}`} onClick={() => setActivePanel("git")} />
           <Bug className={`activity-icon ${activePanel === "debug" ? "active" : ""}`} onClick={() => setActivePanel("debug")} />
 
+          <Wrench
+            className={`activity-icon ${currentFile === "Tools" ? "active" : ""}`}
+            onClick={() => setActiveFile("Tools")}
+          />
+
           <div className="activity-bottom">
             <Settings className="activity-icon" onClick={() => setActiveFile("Settings")} />
           </div>
@@ -191,6 +215,12 @@ function App() {
                     <Code /> {name}
                   </div>
                 ))}
+                <div
+                  className={`file-item ${currentFile === "Tools" ? "active" : ""}`}
+                  onClick={() => setActiveFile("Tools")}
+                >
+                  <Wrench /> Tools
+                </div>
                 <div
                   className={`file-item ${currentFile === "Settings" ? "active" : ""}`}
                   onClick={() => setActiveFile("Settings")}

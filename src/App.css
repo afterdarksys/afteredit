@@ -106,3 +106,77 @@ body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "S
 .cp-item:hover { background: var(--accent-color); color: white; }
 .cp-shortcut { background: #333; padding: 2px 6px; border-radius: 4px; font-size: 11px; color: #ccc; }
 .cp-item:hover .cp-shortcut { background: rgba(255,255,255,0.2); color: white; }
+
+/* Developer Tools */
+.tools-ui { flex: 1; display: flex; min-height: 0; background: var(--bg-color); }
+.tools-nav {
+  width: 190px; border-right: 1px solid #333; padding: 12px 8px; display: flex;
+  flex-direction: column; gap: 2px; flex-shrink: 0; overflow-y: auto;
+}
+.tools-nav-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: none;
+  background: transparent; color: var(--text-primary); font-size: 13px; text-align: left;
+  border-radius: 4px; cursor: pointer; font-family: inherit;
+}
+.tools-nav-item:hover { background: rgba(255,255,255,0.06); }
+.tools-nav-item.active { background: var(--accent-color); color: #fff; }
+
+.tools-body { flex: 1; padding: 20px 24px; overflow-y: auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.mono { font-family: Menlo, Monaco, "Courier New", monospace; }
+
+.tool-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tool-input {
+  flex: 1; min-width: 90px; padding: 7px 9px; background: #3c3c3c; border: 1px solid #555;
+  color: #eee; border-radius: 4px; font-size: 13px;
+}
+.tool-input:focus { outline: none; border-color: var(--accent-color); }
+.tool-input:disabled { opacity: 0.4; }
+.tool-flags { flex: 0 0 70px; }
+.tool-op { flex: 0 0 100px; }
+.tool-textarea {
+  width: 100%; padding: 9px; background: #1a1a1a; border: 1px solid #555; color: #eee;
+  border-radius: 4px; font-size: 13px; resize: vertical; box-sizing: border-box;
+}
+.tool-textarea:focus { outline: none; border-color: var(--accent-color); }
+.tool-button {
+  padding: 7px 11px; background: #3c3c3c; border: 1px solid #555; color: #ddd;
+  border-radius: 4px; font-size: 12px; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.tool-button:hover { background: #4a4a4a; color: #fff; }
+
+.tool-results { display: flex; flex-direction: column; gap: 1px; }
+.tool-summary {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #888;
+  margin: 12px 0 4px; border-bottom: 1px solid #333; padding-bottom: 4px;
+}
+.tool-summary:first-child { margin-top: 0; }
+.tool-row { display: flex; align-items: center; gap: 10px; padding: 5px 2px; font-size: 13px; }
+.tool-row:hover { background: rgba(255,255,255,0.03); }
+.tool-row-label { flex: 0 0 190px; color: #999; font-size: 12px; }
+.tool-row-value {
+  flex: 1; font-family: Menlo, Monaco, "Courier New", monospace; color: #dcdcaa;
+  word-break: break-all; min-width: 0;
+}
+.tool-copy {
+  flex-shrink: 0; background: transparent; border: none; color: #777; cursor: pointer;
+  padding: 3px; display: flex; border-radius: 3px;
+}
+.tool-copy:hover { color: #fff; background: rgba(255,255,255,0.1); }
+
+.tool-output-block { position: relative; background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 10px 34px 10px 10px; }
+.tool-output-block .tool-copy { position: absolute; top: 6px; right: 6px; }
+.tool-output-block pre { margin: 0; white-space: pre-wrap; word-break: break-all; color: #9cdcfe; font-size: 13px; }
+
+.tool-match { display: flex; gap: 10px; align-items: baseline; padding: 4px 2px; font-size: 13px; border-bottom: 1px solid #2a2a2a; }
+.tool-match-index { flex: 0 0 60px; color: #666; font-size: 11px; font-family: Menlo, Monaco, monospace; }
+.tool-match .mono { color: #ce9178; }
+.tool-groups { color: #888; font-size: 11px; font-family: Menlo, Monaco, monospace; }
+.tool-split { font-size: 12px; color: #9cdcfe; line-height: 1.7; word-break: break-all; }
+
+.tool-error {
+  display: flex; align-items: center; gap: 7px; padding: 8px 10px; font-size: 12px;
+  background: rgba(244,71,71,0.12); border: 1px solid rgba(244,71,71,0.4);
+  color: #f48771; border-radius: 4px;
+}
+.tool-yes { color: #4ec9b0; font-size: 12px; white-space: nowrap; }
+.tool-no { color: #f48771; font-size: 12px; white-space: nowrap; }
