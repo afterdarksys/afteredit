@@ -5,6 +5,8 @@ import {
 import Editor from "@monaco-editor/react";
 import TerminalPanel, { type OsTheme } from "./TerminalPanel";
 import { usePersistedState } from "./usePersistedState";
+import { languageForFilename } from "./languages";
+import { SAMPLE_FILES } from "./sampleFiles";
 import "./App.css";
 
 type Layout = "stacked" | "side-by-side";
@@ -14,7 +16,7 @@ const LLM_ENGINES = ["Claude Opus 5", "Claude Sonnet 5", "Claude Haiku 4.5"] as 
 
 function App() {
   // Session state: where you left off.
-  const [activeFile, setActiveFile] = usePersistedState<string>("ui.activeFile", "App.tsx");
+  const [activeFile, setActiveFile] = usePersistedState<string>("ui.activeFile", "main.tf");
   const [activePanel, setActivePanel] = usePersistedState<Panel>("ui.activePanel", "explorer");
   const [showCommandPalette, setShowCommandPalette] = usePersistedState<boolean>("ui.palette", false);
 
@@ -24,10 +26,12 @@ function App() {
   const [pairProgrammingOn, setPairProgrammingOn] = usePersistedState<boolean>("pref.pairProgramming", true);
   const [llmEngine, setLlmEngine] = usePersistedState<string>("pref.llmEngine", LLM_ENGINES[2]);
 
-  const [code, setCode] = usePersistedState<string>(
-    "buffer.scratch",
-    `export function App() { return <div>Hello Settings</div>; }`,
-  );
+  const [buffers, setBuffers] = usePersistedState<Record<string, string>>("buffers", SAMPLE_FILES);
+
+  const fileNames = Object.keys(buffers);
+  // A persisted activeFile can name a buffer that no longer exists.
+  const currentFile =
+    activeFile === "Settings" || fileNames.includes(activeFile) ? activeFile : (fileNames[0] ?? "Settings");
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -51,7 +55,7 @@ function App() {
   }, [osTheme]);
 
   const renderEditorContent = () => {
-    if (activeFile === "Settings") {
+    if (currentFile === "Settings") {
       return (
         <div className="preferences-ui">
           <div className="pref-header">Settings</div>
@@ -115,9 +119,10 @@ function App() {
       <Editor
         height="100%"
         theme="vs-dark"
-        defaultLanguage="typescript"
-        value={code}
-        onChange={(v) => setCode(v || "")}
+        path={currentFile}
+        language={languageForFilename(currentFile)}
+        value={buffers[currentFile] ?? ""}
+        onChange={(v) => setBuffers({ ...buffers, [currentFile]: v ?? "" })}
       />
     );
   };
@@ -177,8 +182,21 @@ function App() {
           <div className="sidebar-content">
             {activePanel === "explorer" && (
               <div className="file-tree">
-                <div className={`file-item ${activeFile === "App.tsx" ? "active" : ""}`} onClick={() => setActiveFile("App.tsx")}><Code /> App.tsx</div>
-                <div className={`file-item ${activeFile === "Settings" ? "active" : ""}`} onClick={() => setActiveFile("Settings")}><Settings /> Settings</div>
+                {fileNames.map((name) => (
+                  <div
+                    key={name}
+                    className={`file-item ${currentFile === name ? "active" : ""}`}
+                    onClick={() => setActiveFile(name)}
+                  >
+                    <Code /> {name}
+                  </div>
+                ))}
+                <div
+                  className={`file-item ${currentFile === "Settings" ? "active" : ""}`}
+                  onClick={() => setActiveFile("Settings")}
+                >
+                  <Settings /> Settings
+                </div>
               </div>
             )}
           </div>
@@ -187,10 +205,10 @@ function App() {
         <div className={`center-area layout-${layout}`}>
           <div className="editor-area">
             <div className="editor-tabs">
-              <div className="editor-tab active">{activeFile}</div>
+              <div className="editor-tab active">{currentFile}</div>
             </div>
             <div className="breadcrumbs">
-              afteredit <ChevronRight size={12} style={{ margin: "0 4px" }} /> src <ChevronRight size={12} style={{ margin: "0 4px" }} /> <span style={{ color: "#dcdcaa" }}>{activeFile}</span>
+              afteredit <ChevronRight size={12} style={{ margin: "0 4px" }} /> src <ChevronRight size={12} style={{ margin: "0 4px" }} /> <span style={{ color: "#dcdcaa" }}>{currentFile}</span>
             </div>
 
             <div className="editor-container">
