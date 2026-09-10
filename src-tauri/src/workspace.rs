@@ -11,8 +11,8 @@ use tauri_plugin_dialog::DialogExt;
 pub struct WorkspaceState(pub Mutex<Workspace>);
 #[derive(Default)]
 pub struct Workspace {
-    roots: HashSet<PathBuf>,
-    files: HashSet<PathBuf>,
+    pub(crate) roots: HashSet<PathBuf>,
+    pub(crate) files: HashSet<PathBuf>,
 }
 #[derive(Serialize)]
 pub struct Entry {

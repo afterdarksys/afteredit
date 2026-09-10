@@ -6,6 +6,7 @@ mod lsp_installer;
 mod pty;
 mod tasks;
 mod workspace;
+mod session;
 
 use pty::PtyState;
 use tauri::{Manager, RunEvent};
@@ -26,6 +27,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
+            session::restore_session, session::save_session,
             workspace::choose_path,
             workspace::list_directory,
             workspace::read_file, workspace::project_file_path, workspace::workspace_search,

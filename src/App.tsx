@@ -56,6 +56,7 @@ function App() {
   const [revealLine,setRevealLine]=useState(0);
   const buffersRef=useRef(buffers);buffersRef.current=buffers;
   const [active, setActive] = useState('');
+  const [sessionReady,setSessionReady] = useState(!isTauri());
   const [roots, setRoots] = useState<string[]>([]);
   const [root, setRoot] = useState('');
   const [directory, setDirectory] = useState('');
@@ -86,6 +87,29 @@ function App() {
   const update = (next: string) => { if (activeBuffer) setBuffers(b => ({ ...b, [active]: { ...b[active], value: next } })); else setScratch(next); };
   const report = (e: unknown) => { setStatus(String(e)); playCue('error'); };
   useEffect(()=>{if(debug.phase==="paused")playCue("paused");},[debug.phase,playCue]);
+  useEffect(()=>{
+    if(!isTauri())return;
+    let disposed=false;
+    void invoke<{roots:string[];files:string[];active:string;root:string;directory:string}>('restore_session').then(async session=>{
+      const restored:Record<string,Buffer>={}; const failures:string[]=[]; let bytes=0;
+      for(const path of session.files) {
+        if(disposed)return;
+        try {const value=await invoke<string>('read_file',{path});bytes+=value.length;if(bytes>16*1024*1024){failures.push('Remaining session files exceed the 16 MiB restore limit');break;}restored[path]={value,saved:value,disk:true};}
+        catch {failures.push(path);}
+      }
+      if(disposed)return;
+      setRoots(session.roots);setRoot(session.root);setBuffers(restored);setActive(restored[session.active]?session.active:'');
+      if(session.directory)try{await browse(session.directory);}catch{failures.push(session.directory);}
+      if(!disposed)setStatus(failures.length?'Session restored with unavailable files: '+failures.join(', '):'Previous session restored');
+    }).catch(e=>{if(!disposed)report(e);}).finally(()=>{if(!disposed)setSessionReady(true);});
+    return()=>{disposed=true;};
+  },[]);
+  const sessionFiles=JSON.stringify(Object.keys(buffers));
+  useEffect(()=>{
+    if(!sessionReady || !isTauri())return;
+    const timer=setTimeout(()=>{void invoke('save_session',{session:{roots,files:JSON.parse(sessionFiles),active,root,directory}}).catch(report);},300);
+    return()=>clearTimeout(timer);
+  },[sessionReady,roots,sessionFiles,active,root,directory]);
   useEffect(() => {
     document.body.classList.toggle('theme-mac', theme === 'mac');
     document.body.classList.toggle('theme-win', theme !== 'mac');
@@ -253,7 +277,8 @@ function App() {
     <a className="skip-link" href="#workspace" onClick={e=>{e.preventDefault();focusRegion('workspace');}}>Skip to workspace</a>
     <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => setPalette(true)}>Commands ⌘⇧P</button></header>
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
-    <div className="main-content">
+    {!sessionReady && <div role="status" className="session-loading">Restoring previous session…</div>}
+    <div className="main-content" inert={!sessionReady}>
       <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
         ['editor', Files, 'Files'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
