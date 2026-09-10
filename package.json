@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "test": "node --experimental-strip-types --test src/tools/*.test.ts src/*.test.ts",
     "test:a11y": "playwright test",
-    "test:extensions": "playwright test --config playwright.extensions.config.ts"
+    "test:extensions": "playwright test --config playwright.extensions.config.ts",
+    "test:release": "playwright test --config playwright.release.config.ts"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "36.2.7",

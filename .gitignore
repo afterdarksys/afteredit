@@ -34,3 +34,5 @@ test-results/
 playwright-report/
 
 extension-test-results/
+
+release-test-results/
