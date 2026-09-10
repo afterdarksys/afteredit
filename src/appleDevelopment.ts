@@ -88,3 +88,15 @@ export function deviceAction(id:string,action:'install'|'launch'|'console',app:s
  if(!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundle))throw new Error('Supply the app bundle identifier.');
  return [{command:'/usr/bin/xcrun',args:['devicectl','device','process','launch','--device',id,...(action==='console'?['--console']:[]),bundle],timeoutSeconds:action==='console'?3600:300}];
 }
+import type {DebugConfig} from './debugging.ts';
+export function appleDebug(root:string,executable:string,mode:'launch'|'attach'|'device',pid:string,device=''):DebugConfig{
+ const configuration:Record<string,unknown>={program:root+'/'+applePath(executable),cwd:root,stopOnEntry:true};
+ if(mode!=='launch'){
+  const number=Number(pid);if(!Number.isSafeInteger(number)||number<1)throw new Error('Enter the running app process ID.');
+  if(mode==='device'){
+   if(!/^[0-9a-f-]{36}$/i.test(device))throw new Error('Select the connected device.');
+   configuration.attachCommands=['!device select '+device,'!device process attach --pid '+number];
+  }else configuration.pid=number;
+ }
+ return {adapter:{command:'/usr/bin/xcrun',args:['lldb-dap']},request:mode==='launch'?'launch':'attach',configuration};
+}

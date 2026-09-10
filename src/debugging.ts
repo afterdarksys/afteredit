@@ -24,6 +24,7 @@ export function breakpointArguments(path:string,points:Breakpoint[],capabilities
 export const debugPresets:Record<string,DebugConfig>={
  'Ansible (attach to Ansibug listener)':{adapter:{command:'python3',args:['-m','ansibug','dap']},request:'attach',configuration:{address:'tcp://127.0.0.1:4712'}},
  'C / C++ / Rust (LLDB)':{adapter:{command:'lldb-dap',args:[]},request:'launch',configuration:{program:'${workspaceFolder}/build/program',cwd:'${workspaceFolder}',stopOnEntry:true}},
+ 'Swift package executable':{adapter:{command:'/usr/bin/xcrun',args:['lldb-dap']},request:'launch',configuration:{program:'${workspaceFolder}/.build/debug/YourExecutable',cwd:'${workspaceFolder}',stopOnEntry:true}},
  'macOS Xcode LLDB':{adapter:{command:'xcrun',args:['lldb-dap']},request:'launch',configuration:{program:'${workspaceFolder}/build/program',cwd:'${workspaceFolder}',stopOnEntry:true}},
  'Python (debugpy)':{adapter:{command:'python3',args:['-m','debugpy.adapter']},request:'launch',configuration:{type:'python',program:'${file}',cwd:'${workspaceFolder}',console:'internalConsole',justMyCode:true}},
  'Go (running dlv dap server)':{adapter:{port:38697},request:'launch',configuration:{mode:'debug',program:'${workspaceFolder}',cwd:'${workspaceFolder}'}},

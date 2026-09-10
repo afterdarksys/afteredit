@@ -1,12 +1,13 @@
+import type {DebugConfig} from './debugging';
 import {listen} from '@tauri-apps/api/event';
 import OutputLog from './OutputLog';
 import type {Task} from './workflows';
 import type {InfrastructureDiagnostic} from './infrastructure';
 import {useEffect,useRef,useState} from 'react';
 import {invoke,isTauri} from '@tauri-apps/api/core';
-import {appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
+import {appleDebug,appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
 type Tool={name:string;available:boolean;detail:string};
-export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;dirty:boolean;onOpen:(path:string,line:number)=>void;onProblems:(problems:InfrastructureDiagnostic[])=>void}){
+export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug}:{onDebug:(config:DebugConfig)=>void;root:string;dirty:boolean;onOpen:(path:string,line:number)=>void;onProblems:(problems:InfrastructureDiagnostic[])=>void}){
  const [tools,setTools]=useState<Tool[]>([]),[projects,setProjects]=useState<string[]>([]),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
  const [selection,setSelection]=useState<AppleSelection>({project:'',scheme:'',target:'',configuration:'Debug',destination:''}),[metadata,setMetadata]=useState<AppleMetadata>({schemes:[],targets:[],configurations:[]}),[destinations,setDestinations]=useState<AppleDestination[]>([]),[trusted,setTrusted]=useState(false);
  const change=(patch:Partial<AppleSelection>)=>{setSelection(s=>({...s,...patch}));setTrusted(false);setPlan(null);};
@@ -15,6 +16,7 @@ export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;d
  async function loadSimulators(){setBusy(true);try{setSimulators(appleSimulators(await invoke<string>('apple_query',{root,query:{kind:'simulators'}})));setStatus('Simulator list refreshed.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  async function loadProducts(){setBusy(true);try{setProducts(appleProducts(await invoke<string>('apple_query',{root,query:{kind:'settings',...selection}}),root));setStatus('Product settings loaded.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  function prepareSimulator(action:'boot'|'shutdown'|'install'|'launch'){try{setPlan({tasks:simulatorAction(simulator,action,appPath,bundle)});setStatus('Review simulator commands before running.');}catch(e){setStatus(String(e));}}
+ const [executable,setExecutable]=useState(''),[pid,setPid]=useState('');
  const [devices,setDevices]=useState<AppleDevice[]>([]),[device,setDevice]=useState('');
  async function loadDevices(){setBusy(true);try{const found=appleDevices(await invoke<string>('apple_query',{root,query:{kind:'devices'}}));setDevices(found);if(!found.some(d=>d.id===device))setDevice('');setStatus(found.length?'Device list refreshed.':'No connected devices. Pair and enable Developer Mode using Xcode.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  function prepareDevice(action:'install'|'launch'|'console'){try{setPlan({tasks:deviceAction(device,action,appPath,bundle)});setStatus('Review device commands before running.');}catch(e){setStatus(String(e));}}
@@ -39,7 +41,7 @@ export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;d
  <button disabled={busy||!trusted||!selection.scheme||selection.project.endsWith('Package.swift')} onClick={()=>void load('destinations')}>Load destinations</button>
  <label>Destination<select disabled={busy} value={selection.destination} onChange={e=>change({destination:e.target.value})}><option value="">Toolchain default</option>{destinations.map(d=><option key={d.platform+d.id} disabled={!d.available} value={d.id.startsWith('dvtdevice-')?'generic/platform='+d.platform:'platform='+d.platform+',id='+d.id}>{d.name} · {d.platform}{!d.available?' (unavailable)':''}</option>)}</select></label>
  <h2>Built products</h2><button disabled={busy||!trusted||!selection.project||selection.project.endsWith('Package.swift')} onClick={()=>void loadProducts()}>Read product settings</button>
- {products.map((product,i)=><button key={i} disabled={busy||!product.app.endsWith('.app')} onClick={()=>{setAppPath(product.app);setBundle(product.bundle);setPlan(null);}}>Use {product.name}: {product.app||'output outside project'}</button>)}
+ {products.map((product,i)=><button key={i} disabled={busy||!product.app.endsWith('.app')} onClick={()=>{setAppPath(product.app);setBundle(product.bundle);setExecutable(product.executable);setPlan(null);}}>Use {product.name}: {product.app||'output outside project'}</button>)}
  <label>Built app path relative to project<input disabled={busy} value={appPath} onChange={e=>{setAppPath(e.target.value);setPlan(null);}}/></label><label>App bundle identifier<input disabled={busy} value={bundle} onChange={e=>{setBundle(e.target.value);setPlan(null);}}/></label>
  <h2>Simulators</h2><button disabled={busy||!root||!isTauri()} onClick={()=>void loadSimulators()}>Refresh simulators</button>
  <label>Simulator<select disabled={busy} value={simulator} onChange={e=>{setSimulator(e.target.value);setPlan(null);}}><option value="">Choose a simulator</option>{simulators.map(device=><option key={device.id} value={device.id} disabled={!device.available}>{device.name} · {device.runtime} · {device.state}{!device.available?' (unavailable)':''}</option>)}</select></label>
@@ -47,6 +49,9 @@ export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;d
  <h2>Connected devices</h2><p>Device apps must be signed for the selected device. Pair the device and enable Developer Mode in Xcode first.</p><button disabled={busy||!root||!isTauri()} onClick={()=>void loadDevices()}>Refresh connected devices</button>
  <label>Connected device<select disabled={busy} value={device} onChange={e=>{setDevice(e.target.value);setPlan(null);}}><option value="">Choose a connected device</option>{devices.map(d=><option key={d.id} value={d.id}>{d.name} · {d.model} · Developer Mode {d.developerMode}</option>)}</select></label>
  {(['install','launch','console'] as const).map(action=><button key={action} disabled={busy||!trusted||!device} onClick={()=>prepareDevice(action)}>Prepare device {action}</button>)}
+ <h2>Swift and app debugging</h2><p>Launch local macOS/Swift executables directly. For a simulator app, launch it in the selected simulator, then attach using the PID printed by simctl. Device attach requires a signed debug build and Developer Mode.</p>
+ <label>Debug executable relative to project<input disabled={busy} value={executable} onChange={e=>setExecutable(e.target.value)}/></label><label>Running app process ID<input disabled={busy} value={pid} onChange={e=>setPid(e.target.value)} inputMode="numeric"/></label>
+ {(['launch','attach','device'] as const).map(mode=><button key={mode} disabled={busy||dirty||!root||!executable||(mode==='device'&&!device)} onClick={()=>{try{onDebug(appleDebug(root,executable,mode,pid,device));}catch(e){setStatus(String(e));}}}>Configure {mode==='launch'?'Swift/macOS launch':mode==='attach'?'local or simulator attach':'device attach'}</button>)}
  <h2>Build and test</h2><p>Builds and tests can execute project scripts and package plugins. Save modified files first.</p>
  <button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('build')}>Prepare build</button><button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('test')}>Prepare tests</button>
  {dirty&&<p>Save modified project files before running Apple commands.</p>}

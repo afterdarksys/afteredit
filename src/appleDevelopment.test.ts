@@ -39,3 +39,10 @@ test('physical devices use CoreDevice identifiers and explicit console launch',(
  assert.throws(()=>deviceAction('My iPhone','launch','','com.example.App'),/identifier/);
  const id='12345678-1234-1234-1234-123456789ABC';assert.ok(deviceAction(id,'console','','com.example.App')[0].args.includes('--console'));
 });
+import {appleDebug} from './appleDevelopment.ts';
+test('Swift and simulator debugging distinguish launch from attach',()=>{
+ assert.equal(appleDebug('/repo','.build/debug/App','launch','').request,'launch');
+ assert.equal(appleDebug('/repo','out/App','attach','42').configuration.pid,42);
+ assert.throws(()=>appleDebug('/repo','out/App','device','42','device; quit'),/connected device/);
+ assert.throws(()=>appleDebug('/repo','out/App','attach','0'),/process ID/);
+});

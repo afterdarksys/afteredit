@@ -370,14 +370,18 @@ mod integration_tests {
     }
     #[test]
     #[ignore = "requires Xcode lldb-dap and permission to debug a local test process"]
-    fn lldb_breakpoint_stack_variables_and_step() {
-        let root = std::env::temp_dir().join(format!("afteredit-dap-smoke-{}", std::process::id()));
+    fn lldb_breakpoint_stack_variables_and_step() { smoke(false); }
+    #[test]
+    #[ignore = "requires Xcode Swift and permission to debug a local Swift process"]
+    fn swift_breakpoint_stack_variables_and_step() { smoke(true); }
+    fn smoke(swift:bool) {
+        let root = std::env::temp_dir().join(format!("afteredit-dap-smoke-{}-{swift}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let source = root.join("main.c");
+        let source = root.join(if swift{"main.swift"}else{"main.c"});
         let program = root.join("program");
-        std::fs::write(&source,"#include <stdio.h>\nint main(void) {\n volatile int value = 41;\n value += 1;\n printf(\"%d\\n\", value);\n return 0;\n}\n").unwrap();
+        std::fs::write(&source,if swift{"@inline(never)\nfunc runFixture() {\n var value = 41\n value += 1\n print(value)\n}\nrunFixture()\n"}else{"#include <stdio.h>\nint main(void) {\n volatile int value = 41;\n value += 1;\n printf(\"%d\\n\", value);\n return 0;\n}\n"}).unwrap();
         assert!(Command::new("xcrun")
-            .args(["clang", "-g", "-O0"])
+            .args(if swift{["swiftc","-g","-Onone"]}else{["clang", "-g", "-O0"]})
             .arg(&source)
             .arg("-o")
             .arg(&program)
