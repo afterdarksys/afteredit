@@ -96,6 +96,10 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    // No exit handler runs on SIGKILL or a crash, so previous sessions can
+    // leave their directory behind. Sweep them before creating ours.
+    sweep_stale_sessions(&std::env::temp_dir());
+
     let dir = std::env::temp_dir().join(format!("afteredit-{}", std::process::id()));
     let release = dir.join("release");
     fs::create_dir_all(&release).map_err(error)?;
@@ -172,6 +176,34 @@ pub fn editor_release(
     writeln!(pipe, "{code}").map_err(error)
 }
 
+/// Is a process still around? `kill -0` tests for existence without signalling.
+fn process_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Remove `afteredit-<pid>` directories whose owning process is gone.
+fn sweep_stale_sessions(temp: &Path) {
+    let Ok(entries) = fs::read_dir(temp) else { return };
+    let mine = std::process::id();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(pid) = name.strip_prefix("afteredit-").and_then(|p| p.parse::<u32>().ok()) else {
+            continue;
+        };
+        if pid != mine && !process_alive(pid) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 fn restrict(dir: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -211,6 +243,28 @@ mod tests {
             bridge.release_path("1234-1700000000").unwrap(),
             PathBuf::from("/tmp/afteredit-test/release/1234-1700000000"),
         );
+    }
+
+    #[test]
+    fn stale_sessions_are_swept_but_live_ones_are_left_alone() {
+        let temp = std::env::temp_dir().join(format!("afteredit-sweep-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+
+        // A pid that cannot be running, our own, and something unrelated.
+        let dead = temp.join("afteredit-4294967294");
+        let mine = temp.join(format!("afteredit-{}", std::process::id()));
+        let other = temp.join("not-ours");
+        for dir in [&dead, &mine, &other] {
+            fs::create_dir_all(dir).unwrap();
+        }
+
+        sweep_stale_sessions(&temp);
+
+        assert!(!dead.exists(), "a session whose process is gone must be removed");
+        assert!(mine.exists(), "our own session must survive");
+        assert!(other.exists(), "unrelated directories must not be touched");
+        let _ = fs::remove_dir_all(&temp);
     }
 
     #[test]
