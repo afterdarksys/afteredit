@@ -31,7 +31,10 @@ export const debugPresets:Record<string,DebugConfig>={
  'Existing localhost DAP adapter':{adapter:{port:4711},request:'attach',configuration:{}}
 };
 export type DebugRequest=(command:string,args:Record<string,any>)=>Promise<any>;
-export async function configureDebug(request:DebugRequest,ready:Promise<void>,config:DebugConfig,points:Breakpoint[],filters:string[],onCapabilities:(caps:any)=>void,onBreakpoints:(path:string,result:any[])=>void){
+export async function configureDebug(send:DebugRequest,ready:Promise<void>,config:DebugConfig,points:Breakpoint[],filters:string[],onCapabilities:(caps:any)=>void,onBreakpoints:(path:string,result:any[])=>void){
+ // A rejected startup signal must also interrupt an outstanding initialize request.
+ const aborted=ready.then(()=>new Promise<never>(()=>{}));
+ const request:DebugRequest=(command,args)=>Promise.race([send(command,args),aborted]);
  const caps=await request('initialize',{clientID:'afteredit',adapterID:'configured',pathFormat:'path',linesStartAt1:true,columnsStartAt1:true,supportsVariableType:true,supportsVariablePaging:true,supportsRunInTerminalRequest:false,supportsStartDebuggingRequest:false});
  onCapabilities(caps??{});
  const launched=request(config.request,config.configuration);

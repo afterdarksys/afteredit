@@ -16,3 +16,12 @@ a disposable Git change, and run `printf 'AfterEdit shell check\n'` in the termi
 Repeat startup in recovery mode if normal startup fails. Record the OS version,
 bundle commit, observed result and any startup error; do not use a development
 server as evidence that packaged startup works.
+
+## Debugger
+
+`cargo test --manifest-path src-tauri/Cargo.toml lldb_breakpoint_stack_variables_and_step -- --ignored --nocapture`
+passed on this macOS host on 2026-09-10: launch, source breakpoint, threads, stack,
+local value `42`, watch evaluation, step over, continue and normal termination.
+The earlier launch timeout did not recur. This opt-in test requires Xcode LLDB and
+permission to debug a temporary local C program; it is not a native UI test.
+Startup cancellation and adapter-close regressions are covered by frontend tests.

@@ -24,3 +24,20 @@ test('DAP launch does not deadlock while waiting for configurationDone',async()=
 test('a rejected launch is reported even if initialized never arrives',async()=>{
  await assert.rejects(configureDebug(async c=>{if(c==='launch')throw new Error('No program');return {};},new Promise(()=>{}),{adapter:{command:'test'},request:'launch',configuration:{}},[],[],()=>{},()=>{}),/No program/);
 });
+test('stopping startup interrupts an adapter stuck in initialize',async()=>{
+ let abort!:(reason:Error)=>void;
+ const ready=new Promise<void>((_,reject)=>{abort=reject;});
+ const commands:string[]=[];
+ const pending=configureDebug(async c=>{commands.push(c);return new Promise(()=>{});},ready,{adapter:{command:'test'},request:'launch',configuration:{}},[],[],()=>{},()=>{});
+ abort(new Error('Debug start cancelled'));
+ await assert.rejects(pending,/cancelled/);
+ assert.deepEqual(commands,['initialize']);
+});
+test('an adapter closing before initialized prevents breakpoint configuration',async()=>{
+ let abort!:(reason:Error)=>void;
+ const ready=new Promise<void>((_,reject)=>{abort=reject;});
+ const commands:string[]=[];
+ const pending=configureDebug(async c=>{commands.push(c);if(c==='launch')abort(new Error('Adapter closed'));return {};},ready,{adapter:{command:'test'},request:'launch',configuration:{}},[{path:'/repo/a.c',line:4}],[],()=>{},()=>{});
+ await assert.rejects(pending,/Adapter closed/);
+ assert.deepEqual(commands,['initialize','launch']);
+});
