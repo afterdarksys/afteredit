@@ -85,3 +85,12 @@ low-vision developers using VoiceOver on macOS and NVDA on Windows:
 
 Native VoiceOver/NVDA, braille displays, audio playback and live PTY/AI workflows
 require hands-on validation. No WCAG conformance claim is made by this change.
+
+Source-control file actions include the path in their accessible name (for
+example, “Stage file: src/main.ts”). Loading a diff moves focus to its heading;
+Tab enters the named, keyboard-scrollable diff text.
+
+Release pass, 2026-09-10: this automation session reports macOS Accessibility
+access as **false**. Native VoiceOver speech, rotor navigation and braille could
+not be verified. Browser focus and accessible-name tests are separate evidence;
+the hands-on checklist above remains open.

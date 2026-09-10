@@ -6,7 +6,8 @@ const statusName=(code:string)=>({M:'modified',A:'added',D:'deleted',R:'renamed'
 export default function GitPanel({root,onOpen,dirty}:{root:string;onOpen:(path:string)=>void;dirty:boolean}){
  const [snapshot,setSnapshot]=useState<GitStatus|null>(null),[busy,setBusy]=useState(false),[status,setStatus]=useState(''),[diff,setDiff]=useState(''),[selection,setSelection]=useState('');
  const [message,setMessage]=useState(''),[reviewed,setReviewed]=useState<{tree:string;diff:string}|null>(null);
- const generation=useRef(0);
+ const generation=useRef(0),diffHeading=useRef<HTMLHeadingElement>(null);
+ useEffect(()=>{if(selection)diffHeading.current?.focus();},[selection,diff]);
  async function refresh(){
   const id=++generation.current;setBusy(true);setReviewed(null);setStatus('Reading repository…');
   try{const result=await invoke<GitStatus>('git_status',{root});if(id===generation.current){setSnapshot(result);setDiff('');setSelection('');setStatus(result.files.length+' changed files');}}
@@ -40,17 +41,17 @@ export default function GitPanel({root,onOpen,dirty}:{root:string;onOpen:(path:s
   <p role="status">{status}</p>{snapshot&&<><h2>{snapshot.branch}</h2>
   <ul className="git-files">{snapshot.files.map(file=><li key={file.path}><strong>{file.path}</strong>{file.originalPath&&<span> (from {file.originalPath})</span>}
    <p>Index: {statusName(file.index)} · Working tree: {statusName(file.worktree)}</p>
-   <button disabled={busy||dirty||file.worktree===' '} onClick={()=>void stage(file,true)}>Stage file</button>
-   <button disabled={busy||file.index==='?'||file.index===' '} onClick={()=>void stage(file,false)}>Unstage file</button>
-   <button disabled={busy} onClick={()=>void review(file,false)}>Working diff</button>
-   <button disabled={busy||file.index==='?'||file.index===' '} onClick={()=>void review(file,true)}>Staged diff</button>
-   <button disabled={file.worktree==='D'||file.index==='D'} onClick={()=>onOpen(root+'/'+file.path)}>Open file</button>
+   <button disabled={busy||dirty||file.worktree===' '} onClick={()=>void stage(file,true)} aria-label={'Stage file: '+file.path}>Stage file</button>
+   <button disabled={busy||file.index==='?'||file.index===' '} onClick={()=>void stage(file,false)} aria-label={'Unstage file: '+file.path}>Unstage file</button>
+   <button disabled={busy} onClick={()=>void review(file,false)} aria-label={'Working diff: '+file.path}>Working diff</button>
+   <button disabled={busy||file.index==='?'||file.index===' '} onClick={()=>void review(file,true)} aria-label={'Staged diff: '+file.path}>Staged diff</button>
+   <button disabled={file.worktree==='D'||file.index==='D'} onClick={()=>onOpen(root+'/'+file.path)} aria-label={'Open file: '+file.path}>Open file</button>
   </li>)}</ul></>}
   {snapshot&&<section aria-label="Commit staged changes"><h2>Commit</h2><label>Commit message<textarea value={message} onChange={e=>setMessage(e.target.value)} disabled={busy}/></label>
    <p>Commits contain the staged files you review here. Configured Git hooks run during commit.</p>
    <button disabled={busy} onClick={()=>void reviewStaged()}>Review all staged changes</button>
    <button disabled={busy||!reviewed||!message.trim()} onClick={()=>void commit()}>Commit reviewed changes</button>
   </section>}
-  {selection&&<section aria-label="Git diff"><h2>{selection}</h2><pre tabIndex={0} className="git-diff">{diff}</pre></section>}
+  {selection&&<section aria-label="Git diff"><h2 ref={diffHeading} tabIndex={-1}>{selection}</h2><pre aria-label={selection+' diff'} tabIndex={0} className="git-diff">{diff}</pre></section>}
  </section>;
 }

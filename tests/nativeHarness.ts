@@ -19,6 +19,7 @@ export async function nativeHarness(page:Page){
     if(command==='list_directory')return [{name:'note.txt',path:'/project/note.txt',directory:false}];
     if(command==='read_file'){if(!(args.path in w.testDisk))throw Error('File missing');return w.testDisk[args.path];}
     if(command==='save_file'){if(w.testDisk[args.path]!==args.expected)throw Error('External conflict');w.testDisk[args.path]=args.content;return;}
+    if(command==='git_diff')return '- original text\n+ changed text';
     if(command==='git_status')return {branch:'fixture',files:[{path:'note.txt',originalPath:null,index:staged?'M':' ',worktree:staged?' ':'M'}]};
     if(command==='git_stage'){staged=args.stage;return;}
     if(command==='git_review_staged')return {tree:'reviewed-tree',diff:'+ staged content'};

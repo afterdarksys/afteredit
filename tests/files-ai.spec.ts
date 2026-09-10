@@ -38,7 +38,7 @@ test('chat appends streamed chunks and cancellation retains partial output',asyn
 test('Git staging and commit require a current staged review',async({page})=>{
  await nativeHarness(page);await page.goto('/');
  await page.getByRole('button',{name:'Source control',exact:true}).click();
- await page.getByRole('button',{name:'Stage file',exact:true}).click();
+ await page.getByRole('button',{name:'Stage file: note.txt',exact:true}).click();
  await expect(page.getByText('Index: modified · Working tree: unchanged')).toBeVisible();
  await page.getByLabel('Commit message').fill('Reviewed change');
  const commit=page.getByRole('button',{name:'Commit reviewed changes'});
