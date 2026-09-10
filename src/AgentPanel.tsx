@@ -1,3 +1,4 @@
+import ChangeReview from './ChangeReview';
 import {useEffect,useRef,useState} from 'react';
 import {agentInstructions,parseAction,type AgentAction} from './agent';
 import {taskOrder,type Task} from './workflows';
@@ -10,6 +11,8 @@ export default function AgentPanel(props:Props){
  const [pending,setPending]=useState<{run:Run;action:AgentAction}|null>(null);const current=useRef<Run|null>(null),taskRunning=useRef(false);const stopTask=useRef(props.onStopTask);stopTask.current=props.onStopTask;
  const stop=()=>{if(current.current)current.current.stopped=true;setPending(null);setActive(false);setStatus('Stopped; an in-flight provider request may still finish and remains charged.');if(taskRunning.current)stopTask.current();};
  useEffect(()=>()=>{if(current.current)current.current.stopped=true;if(taskRunning.current)stopTask.current();},[props.root]);
+ const reviewHeading=useRef<HTMLHeadingElement>(null);
+ useEffect(()=>{if(pending)reviewHeading.current?.focus();},[pending]);
  const live=(run:Run)=>current.current===run&&!run.stopped;
  const note=(run:Run,text:string)=>{run.transcript=(run.transcript+'\n'+text).slice(-100000);if(live(run))setLog(run.transcript);};
  async function next(run:Run){
@@ -43,6 +46,6 @@ export default function AgentPanel(props:Props){
  <label className="check"><input type="checkbox" checked={autoRead} disabled={active} onChange={e=>setAutoRead(e.target.checked)}/> Allow project file reads without asking on every step</label>
  <button disabled={!props.root||!goal.trim()||active||busy||!Number.isInteger(maxSteps)||maxSteps<1||maxSteps>100||!Number.isSafeInteger(maxUnits)||maxUnits<1} onClick={start}>Start agent run</button>{active&&<button onClick={stop}>Stop run</button>}
  <p role="status">{status}</p>
- {pending&&<div className="agent-review"><h3>Review {pending.action.type}</h3>{pending.action.type==='edit_file'?<><p>{pending.action.path}</p><div className="field-row"><pre>{'Original:\n'+pending.action.oldText}</pre><pre>{'Replacement:\n'+pending.action.newText}</pre></div></>:pending.action.type==='run_task'?<pre>{JSON.stringify(taskOrder(pending.run.tasks,[pending.action.task]).map(id=>({id,...pending.run.tasks[id]})),null,2)}</pre>:<pre>{JSON.stringify(pending.action,null,2)}</pre>}<button disabled={busy} onClick={()=>{setBusy(true);void props.onSaveEdits().then(()=>setStatus("Saved modified project buffers; review and approve the action when ready.")).catch(e=>setStatus(String(e))).finally(()=>setBusy(false));}}>Save all modified project files</button><button disabled={busy} onClick={()=>void perform(pending.run,pending.action)}>Approve action and continue</button><button onClick={stop}>Reject and stop</button></div>}
- <pre className="ai-answer">{log}</pre></section>;
+ {pending&&<div className="agent-review"><h3 ref={reviewHeading} tabIndex={-1}>Review {pending.action.type}</h3>{pending.action.type==='edit_file'?<ChangeReview path={pending.action.path} oldText={pending.action.oldText} newText={pending.action.newText}/>:pending.action.type==='run_task'?<pre>{JSON.stringify(taskOrder(pending.run.tasks,[pending.action.task]).map(id=>({id,...pending.run.tasks[id]})),null,2)}</pre>:<pre>{JSON.stringify(pending.action,null,2)}</pre>}<button disabled={busy} onClick={()=>{setBusy(true);void props.onSaveEdits().then(()=>setStatus("Saved modified project buffers; review and approve the action when ready.")).catch(e=>setStatus(String(e))).finally(()=>setBusy(false));}}>Save all modified project files</button><button disabled={busy} onClick={()=>void perform(pending.run,pending.action)}>Approve action and continue</button><button onClick={stop}>Reject and stop</button></div>}
+ <pre className="ai-answer" tabIndex={0} aria-label="Agent transcript">{log}</pre></section>;
 }
