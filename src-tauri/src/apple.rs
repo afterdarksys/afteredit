@@ -51,3 +51,30 @@ fn within(root:&Path,path:&str)->Result<PathBuf,String>{
   assert_eq!(scan(&root).unwrap(),vec!["App.xcodeproj","Library/Package.swift"]);assert!(within(&root,"../outside").is_err());std::fs::remove_dir_all(root).unwrap();
  }
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct Query {kind:String,#[serde(default)]project:String,#[serde(default)]scheme:String,#[serde(default)]target:String,#[serde(default)]configuration:String,#[serde(default)]path:String}
+fn value(value:&str)->Result<(),String>{if value.len()>1000||value.starts_with('-')||value.contains(['\0','\n','\r']){Err("Invalid Apple tool argument.".into())}else{Ok(())}}
+fn query(root:&Path,q:Query)->Result<String,String>{
+ for v in [&q.scheme,&q.target,&q.configuration]{value(v)?;}
+ let project=within(root,&q.project)?;
+ if project.file_name().and_then(|v|v.to_str())==Some("Package.swift") {
+  if q.kind!="metadata"{return Err("Swift packages use Swift build/test commands, not Xcode destinations.".into());}
+  return run(project.parent().unwrap(),"/usr/bin/xcrun",&["swift","package","describe","--type","json"]);
+ }
+ let kind=match project.extension().and_then(|v|v.to_str()){Some("xcodeproj")=>"-project",Some("xcworkspace")=>"-workspace",_=>return Err("Choose an Xcode project, workspace or Package.swift.".into())};
+ let mut args=vec![kind.to_string(),project.to_string_lossy().into_owned()];
+ match q.kind.as_str(){"metadata"=>args.extend(["-list".into(),"-json".into()]),"destinations"|"settings"=>{
+  if q.scheme.is_empty()&&q.target.is_empty(){return Err("Select a scheme or target first.".into());}
+  if !q.scheme.is_empty(){args.extend(["-scheme".into(),q.scheme]);}else{args.extend(["-target".into(),q.target]);}
+  if !q.configuration.is_empty(){args.extend(["-configuration".into(),q.configuration]);}
+  if q.kind=="destinations"{args.push("-showdestinations".into());}else{args.extend(["-showBuildSettings".into(),"-json".into()]);}
+ },_=>return Err("Unsupported Apple query.".into())}
+ run(root,"/usr/bin/xcodebuild",&args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+#[tauri::command]
+pub async fn apple_query(workspace:tauri::State<'_,crate::workspace::WorkspaceState>,root:String,query:Query)->Result<String,String>{
+ let root=crate::workspace::allowed(&workspace,Path::new(&root))?;
+ tauri::async_runtime::spawn_blocking(move||self::query(&root,query)).await.map_err(|e|e.to_string())?
+}
