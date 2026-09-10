@@ -129,9 +129,9 @@ See the [Monaco FAQ](https://github.com/microsoft/monaco-editor#faq) and
 
 Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy and
 Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
-Other languages currently have syntax editing and configurable build commands,
-not full LSP diagnostics, refactoring or debugging. The existing consented LSP
-installer does not connect those servers to Monaco. Git/search/debug sidebar
+Other languages can connect installed LSP servers through Language Services.
+Diagnostics, completion, hover, definition and document formatting are supported
+when advertised by the server. Refactoring/code actions and debugging are not yet supported. Git/search/debug sidebar
 placeholders and the simulated AI status have been removed. Monaco's in-file
 find remains available. Integrated Git, DAP, remote development,
 and extension hosting are future work.
@@ -181,3 +181,25 @@ default 900). Arguments, working directories and environment values may referenc
 literal argument boundaries; shell interpretation occurs only if you explicitly
 configure a shell command. File variables require an active disk file.
 The workbench records the last 30 workflow outcomes, filtered by project.
+
+
+### Native language services
+
+Language Services connects up to eight installed stdio LSP servers, with project
+root, executable, arguments, environment and initialization options. Common server
+presets cover Rust, Go, C/C++, Java, Python, PHP, Perl, Groovy, Bash, JS/TS, HTML and
+CSS. Java/Groovy may require installation-specific paths and arguments. Connections
+are explicit; opening a project never executes its configured server automatically.
+
+Example: `"languageServers": { "go": { "command": "gopls", "args": ["serve"] } }`.
+Personal toolchain bin directories are searched for GUI launches. Servers must use
+UTF-16 positions. The client sends open/change/save/close notifications, handles
+full or incremental synchronization, and exposes advertised diagnostics, completion,
+hover, definitions and formatting through Monaco. Arbitrary server workspace edits
+and executable completion commands are not applied. Dynamic registration, semantic
+tokens, rename/code actions and DAP debugging remain unsupported. Disconnected
+servers can be removed and reconnected in the Language Services panel.
+
+Settings detects build manifests in the current explorer directory, including mixed
+language projects. Presets configure commands; toolchain installation/version selection
+remains the responsibility of the project's existing build tools.

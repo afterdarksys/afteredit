@@ -1,4 +1,6 @@
 import './monaco-setup';
+import { connectModel } from './lspClient';
+import type { ConnectedServer } from './languageServices';
 import { activateExtensions } from './extensionRuntime';
 import type { Extension } from './extensions';
 import { useEffect, useRef, useState } from 'react';
@@ -6,10 +8,12 @@ import Editor from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
-export default function CodeEditor({ path, value, onChange, options, onSave, extensions, revealLine }: { path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number }) {
+export default function CodeEditor({ path, value, onChange, options, onSave, extensions, revealLine, servers, onNavigate, onError }: { path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number; servers: ConnectedServer[]; onNavigate:(path:string,line:number)=>void; onError:(text:string)=>void }) {
   const [instance, setInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
   useEffect(()=>activateExtensions(extensions,['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark'),[extensions,options.theme]);
   useEffect(()=>{if(instance&&revealLine>0){instance.setPosition({lineNumber:revealLine,column:1});instance.revealLineInCenter(revealLine);instance.focus();}},[instance,path,revealLine]);
+  const callbacks=useRef({onNavigate,onError});callbacks.current={onNavigate,onError};
+  useEffect(()=>{if(!instance)return;const server=servers.find(s=>s.language===languageForFilename(path)&&(path.startsWith(s.root+'/')||path.startsWith(s.root+'\\')));if(server)return connectModel(instance,path,server,(p,l)=>callbacks.current.onNavigate(p,l),e=>callbacks.current.onError(e));},[instance,path,servers]);
   const status = useRef<HTMLDivElement>(null);
   const save = useRef(onSave); save.current = onSave;
   useEffect(() => {

@@ -29,3 +29,10 @@ test('task variables remain literal argv and timeout settings are validated',()=
  assert.throws(()=>expandTask({command:'echo',args:['${unknown}']},{project:'/repo',file:''}));
  assert.throws(()=>resolveConfig([{tasks:{test:{command:'go',args:[],timeoutSeconds:0}}}]));
 });
+import { detectBuildSystems } from './languageServices.ts';
+test('mixed build manifests and scoped language servers are recognized',()=>{
+ assert.deepEqual(detectBuildSystems(['Cargo.toml','package.json','uv.lock']),['Rust / Cargo','Node / HTML / CSS (npm)','Python / uv']);
+ const config=resolveConfig([{languageServers:{go:{command:'gopls',args:['serve']}}},{languageServers:{go:{command:'/tools/gopls',args:[]}}}]);
+ assert.equal(config.languageServers.go.command,'/tools/gopls');
+ assert.throws(()=>resolveConfig([{languageServers:{go:{command:'gopls',args:'serve'}}}]));
+});

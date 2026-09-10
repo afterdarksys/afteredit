@@ -1,4 +1,5 @@
 mod ai;
+mod lsp;
 mod registry;
 mod lsp_installer;
 mod pty;
@@ -15,6 +16,7 @@ pub fn run() {
         .manage(workspace::WorkspaceState::default())
         .manage(tasks::TaskState::default())
         .manage(ai::AiState::default())
+        .manage(lsp::LspState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -34,6 +36,7 @@ pub fn run() {
             tasks::run_task,
             tasks::cancel_task,
             registry::registry_search, registry::registry_download,
+            lsp::lsp_start,lsp::lsp_request,lsp::lsp_notify,lsp::lsp_stop,
             ai::ask_ai
         ])
         .build(tauri::generate_context!())
@@ -43,6 +46,7 @@ pub fn run() {
             if let RunEvent::Exit = event {
                 app.state::<PtyState>().shutdown();
                 app.state::<tasks::TaskState>().shutdown();
+                app.state::<lsp::LspState>().shutdown();
             }
         });
 }

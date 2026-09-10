@@ -1,12 +1,13 @@
+import type { ServerConfig } from './languageServices.ts';
 import { editorDefaults, validateEditor, type EditorPreferences } from './preferences.ts';
 export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number };
 export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[]; exclude?: string[]; enabled?: boolean };
-export type ProjectConfig = { editor: EditorPreferences; tasks: Record<string, Task>; rules: Rule[]; workflows: Record<string,string[]>; instructions: string };
-export const defaults: ProjectConfig = { editor: editorDefaults, tasks: {}, rules: [], workflows: {}, instructions: '' };
+export type ProjectConfig = { editor: EditorPreferences; tasks: Record<string, Task>; rules: Rule[]; languageServers: Record<string,ServerConfig>; workflows: Record<string,string[]>; instructions: string };
+export const defaults: ProjectConfig = { editor: editorDefaults, tasks: {}, rules: [], languageServers: {}, workflows: {}, instructions: '' };
 function record(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 function strings(v: unknown): v is string[] { return Array.isArray(v) && v.every(x => typeof x === 'string'); }
 export function resolveConfig(layers: unknown[]): ProjectConfig {
-  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, tasks: {}, workflows: {} };
+  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, tasks: {}, languageServers: {}, workflows: {} };
   for (const layer of layers) {
     if (!record(layer)) throw new Error('Configuration must be an object');
     if (layer.editor !== undefined) {
@@ -29,6 +30,7 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
       for(const r of layer.rules as Rule[]) {if(r.exclude!==undefined&&!strings(r.exclude))throw new Error('Rule excludes must be globs');if(r.enabled!==undefined&&typeof r.enabled!=='boolean')throw new Error('Rule enabled must be boolean');}
       result.rules = layer.rules as Rule[];
     }
+    if(layer.languageServers!==undefined){if(!record(layer.languageServers))throw new Error('languageServers must be an object');for(const [language,server]of Object.entries(layer.languageServers)){if(!/^[a-z][a-z0-9_-]*$/.test(language)||!record(server)||typeof server.command!=='string'||!strings(server.args)|| (server.env!==undefined&&(!record(server.env)||!Object.values(server.env).every(v=>typeof v==='string'))))throw new Error('Invalid language server');result.languageServers[language]=server as ServerConfig;}}
     if(layer.workflows!==undefined){if(!record(layer.workflows))throw new Error('workflows must be an object');for(const [name,ids] of Object.entries(layer.workflows)){if(['__proto__','constructor','prototype'].includes(name)||!strings(ids))throw new Error('Invalid named workflow');result.workflows[name]=ids;}}
     if (layer.instructions !== undefined) {
       if (typeof layer.instructions !== 'string') throw new Error('instructions must be text');
