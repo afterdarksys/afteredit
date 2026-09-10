@@ -1,4 +1,5 @@
 mod ai;
+mod registry;
 mod lsp_installer;
 mod pty;
 mod tasks;
@@ -23,7 +24,7 @@ pub fn run() {
             lsp_installer::check_and_install_lsp,
             workspace::choose_path,
             workspace::list_directory,
-            workspace::read_file,
+            workspace::read_file, workspace::workspace_search,
             workspace::save_file,
             workspace::save_as,
             workspace::confirm_discard,
@@ -32,6 +33,7 @@ pub fn run() {
             workspace::task_directory,
             tasks::run_task,
             tasks::cancel_task,
+            registry::registry_search, registry::registry_download,
             ai::ask_ai
         ])
         .build(tauri::generate_context!())

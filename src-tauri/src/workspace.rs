@@ -289,3 +289,27 @@ pub async fn confirm_discard(app: tauri::AppHandle) -> Result<bool, String> {
     .await
     .map_err(error)
 }
+
+#[derive(Serialize)]
+pub struct SearchHit { path:String, line:usize, text:String }
+#[derive(Serialize)]
+pub struct SearchResults { hits:Vec<SearchHit>, truncated:bool }
+#[tauri::command]
+pub async fn workspace_search(state:tauri::State<'_,WorkspaceState>, root:String, query:String)->Result<SearchResults,String>{
+ let root=allowed(&state,Path::new(&root))?;
+ if query.is_empty() || query.len()>512 {return Err("Enter 1–512 characters".into());}
+ tauri::async_runtime::spawn_blocking(move||{
+  let mut result=SearchResults{hits:Vec::new(),truncated:false}; let mut dirs=vec![root]; let mut visited=0; let start=std::time::Instant::now();
+  while let Some(dir)=dirs.pop(){
+   for entry in fs::read_dir(dir).map_err(error)? {
+    let entry=entry.map_err(error)?;visited+=1;
+    if visited>20000 || start.elapsed()>std::time::Duration::from_secs(3) || result.hits.len()>=200 {result.truncated=true;return Ok(result);}
+    let kind=entry.file_type().map_err(error)?; if kind.is_symlink(){continue;}
+    if kind.is_dir(){if ![".git","node_modules","target","dist",".venv","vendor"].contains(&entry.file_name().to_string_lossy().as_ref()){dirs.push(entry.path());}continue;}
+    if entry.metadata().map_err(error)?.len()>1024*1024{continue;}
+    if let Ok(text)=fs::read_to_string(entry.path()) {if text.contains('\0'){continue;}for (line,text) in text.lines().enumerate(){if text.contains(&query){result.hits.push(SearchHit{path:entry.path().to_string_lossy().into_owned(),line:line+1,text:text.chars().take(500).collect()});if result.hits.len()>=200{result.truncated=true;return Ok(result);}}}}
+   }
+  }
+  Ok(result)
+ }).await.map_err(error)?
+}

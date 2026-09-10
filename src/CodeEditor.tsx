@@ -1,11 +1,15 @@
 import './monaco-setup';
+import { activateExtensions } from './extensionRuntime';
+import type { Extension } from './extensions';
 import { useEffect, useRef, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
-export default function CodeEditor({ path, value, onChange, options, onSave }: { path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void }) {
+export default function CodeEditor({ path, value, onChange, options, onSave, extensions, revealLine }: { path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number }) {
   const [instance, setInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
+  useEffect(()=>activateExtensions(extensions,['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark'),[extensions,options.theme]);
+  useEffect(()=>{if(instance&&revealLine>0){instance.setPosition({lineNumber:revealLine,column:1});instance.revealLineInCenter(revealLine);instance.focus();}},[instance,path,revealLine]);
   const status = useRef<HTMLDivElement>(null);
   const save = useRef(onSave); save.current = onSave;
   useEffect(() => {
@@ -38,5 +42,5 @@ export default function CodeEditor({ path, value, onChange, options, onSave }: {
     void attach().catch(e=>{if(!disposed) node.textContent = `Keymap could not load: ${String(e)}. Standard bindings remain available.`;});
     return ()=>{disposed=true;adapter?.dispose();node.textContent='';};
   },[instance,options.keymap]);
-  return <div className="editor-host"><div className="editor-surface"><Editor height="100%" theme={options.theme} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={editorOptions(options)} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
+  return <div className="editor-host"><div className="editor-surface"><Editor height="100%" theme={['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark'} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={editorOptions(options)} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
 }

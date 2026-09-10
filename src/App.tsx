@@ -2,11 +2,14 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Files, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
+import { Files, Search, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
 import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
+import SearchPanel from './SearchPanel';
+import ExtensionsPanel from './ExtensionsPanel';
+import { restoreExtensions, type Extension } from './extensions';
 import PreferencesPanel from './PreferencesPanel';
 import { editorDefaults, validateEditor, savedText } from './preferences';
 import { usePersistedState } from './usePersistedState';
@@ -14,16 +17,19 @@ import { defaults, matches, presets, resolveConfig, taskOrder, type ProjectConfi
 const CodeEditor = lazy(() => import('./CodeEditor'));
 type Entry = { name: string; path: string; directory: boolean };
 type Buffer = { value: string; saved: string; disk: boolean };
-type View = 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions';
+type View = 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search';
 const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
+  const [extensions, setExtensions] = useState<Extension[]>(()=>{try{return restoreExtensions(localStorage.getItem('extensions.v1')??'[]');}catch{return [];}});
+  const changeExtensions = (next:Extension[]) => {try {localStorage.setItem('extensions.v1',JSON.stringify(next));setExtensions(next);}catch {setStatus('Extension storage is full; remove an extension and retry.');}};
   const [personalJSON, setPersonalJSON] = usePersistedState('editor.preferences.v1', '{}');
   const personal = (() => { try { return {...editorDefaults,...validateEditor(JSON.parse(personalJSON))}; } catch { return editorDefaults; } })();
   const [theme, setTheme] = usePersistedState('pref.osTheme', 'mac');
   const [layout, setLayout] = usePersistedState('pref.layout', 'stacked');
   const [scratch, setScratch] = usePersistedState('scratch.v2', '// Welcome to AfterEdit. Open a file or a project to begin.\n');
   const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
+  const [revealLine,setRevealLine]=useState(0);
   const [active, setActive] = useState('');
   const [roots, setRoots] = useState<string[]>([]);
   const [root, setRoot] = useState('');
@@ -182,7 +188,7 @@ function App() {
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
     <div className="main-content">
       <nav className="activity-bar" aria-label="Workbench">{([
-        ['editor', Files, 'Files'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
+        ['editor', Files, 'Files'], ['search', Search, 'Project search'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => setView(id)}><Icon size={21} /></button>)}</nav>
       <aside className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
@@ -195,10 +201,11 @@ function App() {
         <main className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} onSave={() => void save()} /></Suspense></ErrorBoundary>}
+            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} revealLine={revealLine} extensions={extensions} onSave={() => void save()} /></Suspense></ErrorBoundary>}
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
             {view === 'ai' && <AiPanel context={value} instructions={config.instructions} />}
-            {view === 'extensions' && <section className="workbench-page"><h1>Extensions</h1><p>AfterEdit bundles Monaco language tokenizers and developer tools. VS Code extensions and VSIX packages are not currently supported.</p><p>Running VS Code extensions requires a compatible extension host and APIs. Open VSX is a candidate registry for that integration; registry access alone does not make extensions work.</p><p>Microsoft's Marketplace is not a general-purpose registry for third-party editors. No Marketplace endpoint is configured.</p></section>}
+            {view === 'search' && <SearchPanel root={activeRoot} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} /> }
+            {view === 'extensions' && <ExtensionsPanel extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}
             {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
               <h2>Project and directory overrides</h2><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>
               {layers.map(path => <button key={path} onClick={() => void openFile(path).catch(report)}>{path}</button>)}<p role="alert">{configError}</p><h2>Effective settings</h2><pre>{JSON.stringify(config, null, 2)}</pre>

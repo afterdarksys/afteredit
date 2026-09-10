@@ -118,10 +118,10 @@ Full autonomous multi-step agent orchestration is not implemented.
 
 ## Extensions and language services
 
-VS Code Marketplace/VSIX extensions **do not run in this build**. Monaco is an
+Executable VS Code extensions **do not run in this build**. Monaco is an
 editor component, not the VS Code extension host. A compatible host, API layer,
 lifecycle management and extension testing are required before exposing installs.
-Open VSX is a possible registry for that future work. Microsoft Marketplace use
+Open VSX search and import are available for declarative themes and snippets. Microsoft Marketplace use
 also has product restrictions; no Marketplace API is configured.
 
 See the [Monaco FAQ](https://github.com/microsoft/monaco-editor#faq) and
@@ -133,7 +133,7 @@ Other languages currently have syntax editing and configurable build commands,
 not full LSP diagnostics, refactoring or debugging. The existing consented LSP
 installer does not connect those servers to Monaco. Git/search/debug sidebar
 placeholders and the simulated AI status have been removed. Monaco's in-file
-find remains available. Integrated Git, workspace search, DAP, remote development,
+find remains available. Integrated Git, DAP, remote development,
 and extension hosting are future work.
 
 The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
@@ -153,3 +153,20 @@ monaco-emacs (navigation, mark, kill/yank, C-x C-s). Adapters load only when sel
 and dispose on mode/view changes. These are editor keymaps, not embedded Vim/Emacs
 runtimes: vimrc, Emacs Lisp and arbitrary editor plugins are not supported.
 The Commands button provides access even when a legacy binding takes a shortcut.
+
+
+### Supported extension contributions and project search
+
+Extensions can import local VSIX files or search/download from Open VSX. Supported
+packages contain only theme/snippet contributions, with no executable entry point
+or extension dependencies. Enable/disable/remove controls persist locally. Snippets
+use Monaco's snippet insertion; theme UI colors and simple token scopes are mapped,
+while TextMate grammar fidelity and theme `include` files are not yet supported.
+Import limits: 20 MiB compressed, 2 MiB per JSON file, 10 MiB total selected JSON.
+Contribution paths cannot escape the archive's extension directory. Imported files
+are parsed as data and are never executed or extracted onto the filesystem.
+
+Project search is literal/case-sensitive, bounded to 200 matches, 20,000 entries
+and three seconds. It skips symlinks, generated/vendor directories, binary content
+and files over 1 MiB. Results open the matching line. Extension data is stored in
+local application preferences; a storage-capacity error is shown if it cannot fit.
