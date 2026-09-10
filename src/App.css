@@ -279,3 +279,7 @@ dialog.accessible-dialog { position:fixed; top:10%; margin:0 auto; width:560px; 
 dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 .accessible-dialog h2 { margin-top:0; }
 .accessible-dialog .cp-item { width:100%; }
+.editor-navigation { flex-shrink:0; padding:4px 8px; max-height:35%; overflow:auto; }
+.editor-navigation button { margin:2px; }
+.editor-navigation ul { padding-left:22px; }
+.editor-navigation li button { white-space:normal; text-align:left; }

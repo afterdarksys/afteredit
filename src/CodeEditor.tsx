@@ -1,3 +1,4 @@
+import EditorNavigation from './EditorNavigation';
 import { useAccessibility } from './AccessibilityContext';
 import { accessibleEditorOptions, accessibleEditorTheme } from './accessibility';
 import type { InfrastructureDiagnostic } from './infrastructure';
@@ -58,5 +59,5 @@ export default function CodeEditor({ infrastructureDiagnostics, breakpoints, onT
     void attach().catch(e=>{if(!disposed) node.textContent = `Keymap could not load: ${String(e)}. Standard bindings remain available.`;});
     return ()=>{disposed=true;adapter?.dispose();node.textContent='';};
   },[instance,options.keymap]);
-  return <div className="editor-host"><div className="editor-surface"><Editor height="100%" theme={accessibleEditorTheme(accessibility, ['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark')} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),...accessibleEditorOptions(accessibility,path),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
+  return <div className="editor-host"><EditorNavigation instance={instance} path={path} onToggleBreakpoint={()=>{const position=instance?.getPosition();if(position)onToggleBreakpoint(path,position.lineNumber);}}/><div className="editor-surface"><Editor height="100%" theme={accessibleEditorTheme(accessibility, ['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark')} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),...accessibleEditorOptions(accessibility,path),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
 }
