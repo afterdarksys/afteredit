@@ -13,3 +13,15 @@ test('Xcode and Swift metadata normalizes schemes targets and unavailable destin
  const rows=appleDestinations('Available destinations:\n{ platform:iOS Simulator, id:ABC, OS:18.0, name:iPhone }\nIneligible destinations:\n{ platform:iOS, id:DEF, name:Device, error:Unavailable }');
  assert.equal(rows[0].available,true);assert.equal(rows[1].available,false);
 });
+import {appleBuild,appleDiagnostics} from './appleDevelopment.ts';
+const selection={project:'My App.xcodeproj',scheme:'My App',target:'',configuration:'Debug',destination:'platform=macOS'};
+test('build plans preserve literal project paths and require explicit test destinations',()=>{
+ const plan=appleBuild(selection,'test','run-1');assert.ok(plan.tasks[1].args.includes('My App.xcodeproj'));assert.ok(plan.result?.endsWith('run-1.xcresult'));
+ assert.throws(()=>appleBuild({...selection,destination:''},'test','run-1'),/destination/);
+ assert.throws(()=>appleBuild({...selection,project:'../App.xcodeproj'},'build','run'),/relative/);
+ assert.equal(appleBuild({...selection,project:'Library/Package.swift'},'test','run').tasks[0].cwd,'Library/');
+});
+test('Apple diagnostics preserve spaces and discard paths outside the workspace',()=>{
+ const result=appleDiagnostics('/repo/My File.swift:3:7: error: Broken\n/repo/Test.swift:9: error: Failed\n/outside/a.swift:1:1: warning: Wrong','/repo');
+ assert.equal(result.length,2);assert.equal(result[0].column,7);assert.equal(result[1].column,1);
+});

@@ -58,6 +58,7 @@ pub struct Query {kind:String,#[serde(default)]project:String,#[serde(default)]s
 fn value(value:&str)->Result<(),String>{if value.len()>1000||value.starts_with('-')||value.contains(['\0','\n','\r']){Err("Invalid Apple tool argument.".into())}else{Ok(())}}
 fn query(root:&Path,q:Query)->Result<String,String>{
  for v in [&q.scheme,&q.target,&q.configuration]{value(v)?;}
+ if q.kind=="results"{let path=within(root,&q.path)?;if path.extension().and_then(|v|v.to_str())!=Some("xcresult"){return Err("Select an xcresult bundle.".into());}return run(root,"/usr/bin/xcrun",&["xcresulttool","get","test-results","summary","--path",&path.to_string_lossy(),"--compact"]);}
  let project=within(root,&q.project)?;
  if project.file_name().and_then(|v|v.to_str())==Some("Package.swift") {
   if q.kind!="metadata"{return Err("Swift packages use Swift build/test commands, not Xcode destinations.".into());}
