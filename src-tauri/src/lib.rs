@@ -37,6 +37,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
+ formatter::format_source,formatter::list_formatters,formatter::formattable_languages,
             toolchain::inspect_tools,
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
             git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
@@ -68,4 +69,65 @@ pub fn run() {
                 app.state::<dap::DapState>().shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod registration_tests {
+    /// Every `#[tauri::command]` has to appear in `generate_handler!` or the
+    /// frontend's `invoke()` fails at runtime while every unit test still
+    /// passes -- which is exactly how the formatter commands once shipped
+    /// unregistered. Unit tests call the inner function directly, so nothing
+    /// else catches this.
+    #[test]
+    fn every_command_is_registered() {
+        let lib = include_str!("lib.rs");
+        let start = lib.find("generate_handler![").expect("generate_handler! block");
+        let end = start + lib[start..].find(']').expect("end of handler list");
+        let handler = &lib[start..end];
+
+        let modules: [(&str, &str); 14] = [
+            ("ai.rs", include_str!("ai.rs")),
+            ("apple.rs", include_str!("apple.rs")),
+            ("dap.rs", include_str!("dap.rs")),
+            ("formatter.rs", include_str!("formatter.rs")),
+            ("git.rs", include_str!("git.rs")),
+            ("lsp.rs", include_str!("lsp.rs")),
+            ("lsp_installer.rs", include_str!("lsp_installer.rs")),
+            ("menu.rs", include_str!("menu.rs")),
+            ("pty.rs", include_str!("pty.rs")),
+            ("registry.rs", include_str!("registry.rs")),
+            ("session.rs", include_str!("session.rs")),
+            ("tasks.rs", include_str!("tasks.rs")),
+            ("toolchain.rs", include_str!("toolchain.rs")),
+            ("workspace.rs", include_str!("workspace.rs")),
+        ];
+
+        let mut checked = 0;
+        for (file, source) in modules {
+            let lines: Vec<&str> = source.lines().collect();
+            for (index, line) in lines.iter().enumerate() {
+                if line.trim() != "#[tauri::command]" {
+                    continue;
+                }
+                // Doc comments and further attributes may sit between the
+                // attribute and the signature.
+                let signature = lines[index + 1..]
+                    .iter()
+                    .find(|candidate| candidate.contains("fn "))
+                    .unwrap_or_else(|| panic!("{file}: #[tauri::command] with no fn after it"));
+                let name = signature
+                    .split("fn ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['(', '<', ' ']).next())
+                    .unwrap_or_default()
+                    .trim();
+                assert!(
+                    handler.contains(name),
+                    "{file}: command `{name}` is missing from generate_handler!",
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "expected to find many commands, found {checked}");
+    }
 }
