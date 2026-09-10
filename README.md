@@ -1,93 +1,140 @@
 # AfterEdit
 
-A native code editor for devops, devsecops and platform engineers, built on
-Tauri 2, React 19, Monaco and xterm.js, with a real PTY behind the terminal
-panel.
+A native developer workbench using Tauri 2, React, Monaco and a real PTY.
 
-## Status
-
-Working:
-
-- **Native PTY terminal.** A real shell (`$SHELL`, falling back to the passwd
-  entry) runs in a pty; output streams to xterm, keystrokes stream back, and the
-  pty is resized to match the panel. Killed on app exit.
-- **Local Monaco.** The editor is bundled, not fetched from a CDN, so the app
-  starts offline and runs under a restrictive CSP.
-- **Persisted preferences.** Theme, layout, pair-programming toggle, model
-  choice and the scratch buffer survive a restart.
-- **Consented LSP install.** `check_and_install_lsp` locates a language server
-  and, if it is missing, asks before running `brew install`.
-- **Language coverage aimed at infrastructure code.** ~85 bundled tokenizers
-  plus TOML, Makefile, Groovy (Jenkinsfile) and Rego (Spacelift/OPA/Conftest),
-  which Monaco does not ship. Filename rules cover the extensionless and
-  variant files Monaco misses: `Makefile`, `Jenkinsfile.release`,
-  `Dockerfile.prod`, `.env.staging`, `Vagrantfile`, `CODEOWNERS`, `Caddyfile`.
-- **Developer tools panel** (wrench icon, or the command palette): regex
-  tester with named groups and infra presets, base64/base64url/base32/hex/URL
-  codecs, timestamp conversion, base and bitwise arithmetic at 8-64 bit
-  widths, an IPv4/IPv6 subnet calculator, and line-ending analysis and
-  conversion for the open buffer.
-
-Still mocked, and labelled as such in the UI:
-
-- The Search, Git and Debug sidebar panels render nothing.
-- **No formatting or linting outside the four worker-backed languages.** Monaco
-  gives auto-indent everywhere and format/diagnostics for TS/JS, JSON, CSS and
-  HTML only. Go, Python, C and Rust get neither. `lsp_installer.rs` installs
-  server binaries, but there is no LSP client yet -- nothing spawns them or
-  speaks JSON-RPC, so "linter access" is not wired. Shelling out to
-  gofmt/rustfmt/black/clang-format on save is the cheap next step; a real LSP
-  client is the milestone after.
-- No RTF, Word or PDF support. Monaco edits plain text over a string buffer.
-- "Code With Me" is a status-bar toggle with no model behind it.
-- The explorer lists two hardcoded entries; there is no filesystem access yet
-  (the Tauri capability set deliberately grants none).
-- `src-tauri/afteredit-cli.sh` is a sketch of the `$EDITOR` interceptor. Its IPC
-  is not implemented — do not put it on `PATH` yet; a `git commit` routed
-  through it would abort with an unedited message.
-
-## Develop
+## Run
 
 ```sh
-npm install
+npm ci
 npm run tauri dev
 ```
 
-## Build
+`./build.sh` builds a standalone debug app in one command (both frontend and
+native stages). On macOS, open `src-tauri/target/debug/bundle/macos/AfterEdit.app`.
+`./build.sh release` builds the optimized app; neither needs a running dev server.
+
+`npm run dev` is a browser preview: scratch editing and developer tools work,
+while files, tasks, AI and the shell require the desktop application.
 
 ```sh
-npm test           # tool unit tests, Node's built-in runner, no extra deps
-npm run build      # typecheck + bundle the frontend
-npm run tauri build
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build --debug --bundles app
 ```
 
-## Architecture
+## Editing and startup
 
-| Path | Role |
-| --- | --- |
-| `src-tauri/src/pty.rs` | PTY session: spawn, read thread, write, resize, shutdown |
-| `src-tauri/src/lsp_installer.rs` | Language-server discovery and consented install |
-| `src/TerminalPanel.tsx` | xterm host, PTY event wiring, resize observer |
-| `src/monaco-setup.ts` | Points Monaco at the bundled copy and its workers |
-| `src/usePersistedState.ts` | `useState` mirrored to localStorage |
-| `src/languages/` | Tokenizers Monaco lacks, plus filename -> language rules |
-| `src/tools/` | Pure tool functions (encoding, subnet, dates, regex, numbers) |
-| `src/ToolsPanel.tsx` | The developer tools UI |
+Open individual UTF-8 text files or add multiple project folders. The explorer
+lists real directories, tabs retain separate buffers, and Cmd/Ctrl+S saves.
+Save As creates a new file from any buffer. Existing targets must be opened and
+edited using Save. Files larger than 8 MiB and binary content are rejected.
+Symlink entries are hidden; backend access resolves paths against selected roots.
 
-### PTY notes
+Saves use a temporary sibling file and rename, preserve permissions, and reject
+externally changed content. Native close prompts when files have unsaved edits.
+Disk buffers are session-only; the scratch buffer and UI preferences persist.
+Reopen a disk file after restarting. Use Reload from disk to explicitly discard a buffer and read external changes;
+there is no live filesystem watcher yet.
 
-The session (master fd, writer, child killer) lives in Tauri-managed state, not
-in `spawn_pty` locals — dropping the master closes the pty and SIGHUPs the
-shell. `spawn_pty` is idempotent so React StrictMode remounts and webview
-reloads reattach rather than forking a second shell. Output is base64-encoded
-over the event bridge because a read can land mid-UTF-8-sequence; xterm
-reassembles the byte stream from a `Uint8Array`.
+The application shell loads separately from Monaco. Import/render failures show
+an error and recovery editor instead of clearing the workbench; preferences are
+validated on load. Flex sizing provides an editor height in both terminal layouts.
+These changes address identified startup failure paths. The reported white screen
+still needs visual confirmation on the affected installation.
 
-### Tests
+## Project, repository and directory workflows
 
-`npm test` runs on Node 22's built-in test runner with `--experimental-strip-types`,
-so there is no test framework to install and it works offline. Coverage is on the
-pure logic in `src/tools/`, where the bugs are silent: signed-32-bit subnet
-arithmetic, `/31` and `/0` edge cases, RFC 4648 base32 vectors, epoch-unit
-disambiguation, and zero-length regex matches. Test files are excluded from
-`tsc` because `@types/node` is not a dependency.
+Select a repository root as a project. AfterEdit reads `.afteredit.json` from that
+root through the active file's directory. It does not read outside the selected
+root. Multiple project roots can be added to the same session.
+
+- Editor options and task names merge from parent to child.
+- Rules and AI instructions replace the parent value when present.
+- Task dependencies are validated for missing names and cycles.
+- Task working directories are relative to the selected project root.
+- Configurations reload when saved inside AfterEdit. Use Reload for external edits.
+
+Settings can create a configuration in the selected directory from presets for
+Cargo, Go, CMake, Make, Maven, Gradle, npm, pnpm, Yarn, Bun, Composer, Python,
+uv, Perl and Bash. HTML/CSS applications use their project's web build tool.
+Toolchains must already be installed. Supply an absolute executable path or `PATH`
+in `env` if launching from Finder does not expose your toolchain. Projects may use
+any executable/arguments, including container CLIs and agent CLIs; versions and
+package-manager environments are managed by those tools.
+
+Example `.afteredit.json`:
+
+```json
+{
+  "editor": { "fontSize": 14, "tabSize": 4, "wordWrap": "off" },
+  "tasks": {
+    "build": { "command": "cargo", "args": ["build"], "cwd": "backend" },
+    "test": { "command": "cargo", "args": ["test"], "cwd": "backend", "dependsOn": ["build"] },
+    "web": { "command": "npm", "args": ["run", "build"], "cwd": "frontend" }
+  },
+  "rules": [
+    { "event": "save", "pattern": "backend/**/*.rs", "tasks": ["test"] }
+  ],
+  "instructions": "Explain proposed changes and suggest tests before editing."
+}
+```
+
+Build Workflows shows commands for review. Trust the current scope and click Run.
+Tasks execute without shell interpolation, in dependency order, stopping on failure.
+Use an explicit shell executable when a task needs shell syntax. Output streams to
+the task log (last 200,000 characters); Stop kills the process group on Unix and
+process tree on Windows. Tasks time out after 15 minutes. Use the terminal for
+interactive tasks and long-lived development servers.
+
+Rules accept `save` or `manual`, with `*`, `**`, and `?` path globs. Save rules queue
+matching tasks for an explicit Run action. Opening a repository never runs its
+commands. Trust resets when the project scope/configuration changes.
+
+## BYOK and agents
+
+The AI panel sends requests through the native HTTP client to a user-configured
+OpenAI-compatible Chat Completions endpoint. Enter an endpoint, model ID and key;
+keys stay in memory and are never written to preferences or project files.
+Remote endpoints require HTTPS; local HTTP is supported. Redirects are disabled.
+Compatibility is limited to endpoints accepting `messages`, `max_tokens` and
+`stream: false` and returning `choices[0].message.content`.
+
+The active file is included only when explicitly selected. Effective project
+instructions are displayed and included. Requests have a 120-second timeout,
+256 KB input limit and 2 MB response limit.
+
+Daily request caps and reservation-unit caps are enforced before sending and stored
+in the native app-data directory (`ai-usage.json`, with a cross-process lock).
+A unit reservation is input UTF-8 bytes + max output tokens + 1,024. Reservations
+remain charged on failures/timeouts and reset on the next UTC day. They are local
+app usage controls, not exact token counts or provider dollar-budget guarantees.
+Users can change their caps. No paid provider calls are made by the test suite.
+
+The panel provides advice and plans, not autonomous file editing or tool execution.
+Interactive agent CLIs can run in the terminal; noninteractive agent commands can
+be configured as tasks. Their billing is separate from the AI panel's limits.
+Full autonomous multi-step agent orchestration is not implemented.
+
+## Extensions and language services
+
+VS Code Marketplace/VSIX extensions **do not run in this build**. Monaco is an
+editor component, not the VS Code extension host. A compatible host, API layer,
+lifecycle management and extension testing are required before exposing installs.
+Open VSX is a possible registry for that future work. Microsoft Marketplace use
+also has product restrictions; no Marketplace API is configured.
+
+See the [Monaco FAQ](https://github.com/microsoft/monaco-editor#faq) and
+[VS Code FAQ](https://code.visualstudio.com/docs/supporting/faq).
+
+Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy and
+Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
+Other languages currently have syntax editing and configurable build commands,
+not full LSP diagnostics, refactoring or debugging. The existing consented LSP
+installer does not connect those servers to Monaco. Git/search/debug sidebar
+placeholders and the simulated AI status have been removed. Monaco's in-file
+find remains available. Integrated Git, workspace search, DAP, remote development,
+and extension hosting are future work.
+
+The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
+it as `$EDITOR` yet.

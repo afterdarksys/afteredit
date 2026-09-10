@@ -1,3 +1,4 @@
+import { restorePreference } from './persistence';
 import { useEffect, useState } from "react";
 
 /**
@@ -10,8 +11,7 @@ import { useEffect, useState } from "react";
 export function usePersistedState<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(() => {
     try {
-      const stored = localStorage.getItem(key);
-      return stored === null ? fallback : (JSON.parse(stored) as T);
+      return restorePreference(localStorage.getItem(key), fallback);
     } catch {
       return fallback;
     }

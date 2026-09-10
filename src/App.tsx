@@ -1,271 +1,217 @@
-import { useEffect } from "react";
-import {
-  Code, Terminal, GitBranch, LayoutPanelLeft, Search, Bug, Files, ChevronRight, Zap, Settings, Wrench,
-} from "lucide-react";
-import Editor from "@monaco-editor/react";
-import TerminalPanel, { type OsTheme } from "./TerminalPanel";
-import { usePersistedState } from "./usePersistedState";
-import { languageForFilename } from "./languages";
-import { SAMPLE_FILES } from "./sampleFiles";
-import ToolsPanel from "./ToolsPanel";
-import "./App.css";
-
-type Layout = "stacked" | "side-by-side";
-type Panel = "explorer" | "search" | "git" | "debug";
-
-const LLM_ENGINES = ["Claude Opus 5", "Claude Sonnet 5", "Claude Haiku 4.5"] as const;
-
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Files, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
+import TerminalPanel from './TerminalPanel';
+import ToolsPanel from './ToolsPanel';
+import ErrorBoundary from './ErrorBoundary';
+import AiPanel from './AiPanel';
+import { usePersistedState } from './usePersistedState';
+import { defaults, matches, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
+const CodeEditor = lazy(() => import('./CodeEditor'));
+type Entry = { name: string; path: string; directory: boolean };
+type Buffer = { value: string; saved: string; disk: boolean };
+type View = 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions';
+const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
+const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
-  // Session state: where you left off.
-  const [activeFile, setActiveFile] = usePersistedState<string>("ui.activeFile", "main.tf");
-  const [activePanel, setActivePanel] = usePersistedState<Panel>("ui.activePanel", "explorer");
-  const [showCommandPalette, setShowCommandPalette] = usePersistedState<boolean>("ui.palette", false);
-
-  // Preferences: mirrored to localStorage so they survive a restart.
-  const [layout, setLayout] = usePersistedState<Layout>("pref.layout", "side-by-side");
-  const [osTheme, setOsTheme] = usePersistedState<OsTheme>("pref.osTheme", "mac");
-  const [pairProgrammingOn, setPairProgrammingOn] = usePersistedState<boolean>("pref.pairProgramming", true);
-  const [llmEngine, setLlmEngine] = usePersistedState<string>("pref.llmEngine", LLM_ENGINES[2]);
-
-  const [buffers, setBuffers] = usePersistedState<Record<string, string>>("buffers", SAMPLE_FILES);
-
-  const fileNames = Object.keys(buffers);
-  // A persisted activeFile can name a buffer that no longer exists.
-  const currentFile =
-    activeFile === "Settings" || activeFile === "Tools" || fileNames.includes(activeFile)
-      ? activeFile
-      : (fileNames[0] ?? "Settings");
-
-  // The buffer the Tools panel reads and writes: the last real file opened.
-  const toolTarget = fileNames.includes(activeFile) ? activeFile : (fileNames[0] ?? "");
-
+  const [theme, setTheme] = usePersistedState('pref.osTheme', 'mac');
+  const [layout, setLayout] = usePersistedState('pref.layout', 'stacked');
+  const [scratch, setScratch] = usePersistedState('scratch.v2', '// Welcome to AfterEdit. Open a file or a project to begin.\n');
+  const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
+  const [active, setActive] = useState('');
+  const [roots, setRoots] = useState<string[]>([]);
+  const [root, setRoot] = useState('');
+  const [directory, setDirectory] = useState('');
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [view, setView] = useState<View>('editor');
+  const [status, setStatus] = useState('Ready');
+  const [config, setConfig] = useState<ProjectConfig>(defaults);
+  const [layers, setLayers] = useState<string[]>([]);
+  const [configError, setConfigError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const [preset, setPreset] = useState(Object.keys(presets)[0]);
+  const [runLog, setRunLog] = useState('');
+  const [running, setRunning] = useState(false);
+  const [trusted, setTrusted] = useState(false);
+  const [pendingTasks, setPendingTasks] = useState<string[]>([]);
+  const [palette, setPalette] = useState(false);
+  const [query, setQuery] = useState('');
+  const runningRef = useRef(false);
+  const dirtyRef = useRef(false);
+  dirtyRef.current = Object.values(buffers).some(b => b.value !== b.saved);
+  const cancelled = useRef(false);
+  const activeBuffer = buffers[active];
+  const value = activeBuffer?.value ?? scratch;
+  const activeRoot = roots.filter(r => active.startsWith(r + '/') || active.startsWith(r + '\\')).sort((a,b) => b.length - a.length)[0] ?? (activeBuffer?.disk ? '' : root);
+  const scope = !activeRoot ? '' : activeBuffer?.disk && (active.startsWith(activeRoot + '/') || active.startsWith(activeRoot + '\\')) ? parent(active) : directory || activeRoot;
+  const update = (next: string) => { if (activeBuffer) setBuffers(b => ({ ...b, [active]: { ...b[active], value: next } })); else setScratch(next); };
+  const report = (e: unknown) => setStatus(String(e));
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        setShowCommandPalette((prev) => !prev);
-      } else if (e.key === "Escape") {
-        setShowCommandPalette(false);
+    document.body.classList.toggle('theme-mac', theme === 'mac');
+    document.body.classList.toggle('theme-win', theme !== 'mac');
+  }, [theme]);
+  useEffect(() => {
+    let stale = false;
+    if (!activeRoot || !scope) { setConfig(defaults); setLayers([]); setConfigError(''); return; }
+    setConfigError('Loading configuration…');
+    invoke<Array<{ path: string; value: unknown }>>('project_config', { root: activeRoot, directory: scope }).then(result => {
+      if (stale) return;
+      setConfig(resolveConfig(result.map(l => l.value))); setLayers(result.map(l => l.path)); setConfigError('');
+    }).catch(e => { if (!stale) { setConfig(defaults); setConfigError(String(e)); } });
+    return () => { stale = true; };
+  }, [activeRoot, scope, revision]);
+  useEffect(() => { setTrusted(false); setPendingTasks([]); }, [activeRoot, scope, revision]);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let stopped = false;
+    let off: (() => void) | undefined;
+    listen<{ text: string }>('task:output', e => setRunLog(log => (log + e.payload.text).slice(-200000))).then(unlisten => { if (stopped) unlisten(); else off = unlisten; }).catch(report);
+    return () => { stopped = true; off?.(); };
+  }, []);
+  useEffect(() => {
+    const dirty = Object.values(buffers).some(b => b.value !== b.saved);
+    const before = (e: BeforeUnloadEvent) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', before);
+    return () => window.removeEventListener('beforeunload', before);
+  }, [buffers]);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let off: (() => void) | undefined;
+    getCurrentWindow().onCloseRequested(async event => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      try { if (await invoke<boolean>('confirm_discard')) await getCurrentWindow().destroy(); } catch (e) { report(e); }
+    }).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }).catch(report);
+    return () => { disposed = true; off?.(); };
+  }, []);
+  async function reloadFile() {
+    if (!activeBuffer) return;
+    try {
+      const path = active;
+      const text = await invoke<string>('read_file', { path });
+      setBuffers(b => ({ ...b, [path]: { value: text, saved: text, disk: true } }));
+      setStatus(`Reloaded ${basename(path)}`);
+      if (basename(path) === '.afteredit.json') setRevision(n => n + 1);
+    } catch (e) { report(e); }
+  }
+  async function saveAs() {
+    try {
+      const snapshot = value;
+      const path = await invoke<string | null>('save_as', { content: snapshot });
+      if (!path) return;
+      setBuffers(b => ({ ...b, [path]: { value: snapshot, saved: snapshot, disk: true } }));
+      setActive(path); setView('editor'); setStatus(`Created ${basename(path)}`);
+      if (directory) await browse(directory);
+    } catch (e) { report(e); }
+  }
+  async function browse(path: string) { const result = await invoke<Entry[]>('list_directory', { path }); setEntries(result); setDirectory(path); }
+  async function openFile(path: string) {
+    if (!buffers[path]) {
+      const text = await invoke<string>('read_file', { path });
+      setBuffers(b => ({ ...b, [path]: { value: text, saved: text, disk: true } }));
+    }
+    setActive(path); setView('editor');
+  }
+  async function choose(directory: boolean) {
+    try {
+      const path = await invoke<string | null>('choose_path', { directory });
+      if (!path) return;
+      if (directory) { setRoots(r => r.includes(path) ? r : [...r, path]); setRoot(path); setActive(''); await browse(path); }
+      else await openFile(path);
+    } catch (e) { report(e); }
+  }
+  async function save() {
+    if (!activeBuffer) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
+    const snapshot = activeBuffer.value, path = active;
+    try {
+      await invoke('save_file', { path, content: snapshot, expected: activeBuffer.saved });
+      setBuffers(b => ({ ...b, [path]: { ...b[path], saved: snapshot } }));
+      setStatus(`Saved ${basename(path)}`);
+      if (basename(path) === '.afteredit.json') { setRevision(n => n + 1); return; }
+      const relative = path.slice(activeRoot.length + 1).replace(/\\/g, '/');
+      const ids = config.rules.filter(r => r.event === 'save' && matches(r.pattern, relative)).flatMap(r => r.tasks);
+      if (ids.length) { setPendingTasks(ids); setView('tasks'); }
+    } catch (e) { report(e); }
+  }
+  async function run(ids: string[]) {
+    if (!trusted || configError || runningRef.current) return;
+    runningRef.current = true; cancelled.current = false; setRunning(true); setRunLog(''); setPendingTasks([]);
+    try {
+      for (const id of taskOrder(config.tasks, ids)) {
+        if (cancelled.current) break;
+        const task = config.tasks[id];
+        setRunLog(log => log + `\n> ${id}: ${task.command} ${task.args.join(' ')}\n`);
+        const code = await invoke<number>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
+        setRunLog(log => log + `\n[exit ${code}]\n`);
+        if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
       }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [setShowCommandPalette]);
-
-  // Theming only. This used to share an effect with terminal construction,
-  // which meant every theme change rebuilt the terminal. Also uses classList
-  // rather than assigning className, which clobbered anything else on <body>.
+    } catch (e) { setRunLog(log => log + '\n' + String(e)); } finally { runningRef.current = false; setRunning(false); }
+  }
+  async function configure() {
+    try {
+      const content = JSON.stringify({ editor: defaults.editor, tasks: Object.fromEntries(Object.entries(presets[preset]).map(([id, task]) => [id, { ...task, cwd: scope.slice(activeRoot.length + 1) || '.' }])), rules: [], instructions: '' }, null, 2) + '\n';
+      const path = await invoke<string>('create_config', { directory: scope, content });
+      await openFile(path); setRevision(n => n + 1); await browse(scope);
+    } catch (e) { report(e); }
+  }
+  const commands = [
+    { title: 'Open file', action: () => void choose(false) }, { title: 'Add project folder', action: () => void choose(true) },
+    { title: 'Save file', action: () => void save() }, { title: 'Save as new file', action: () => void saveAs() }, { title: 'Build workflows', action: () => setView('tasks') },
+    { title: 'Project settings', action: () => setView('settings') }, { title: 'Developer tools', action: () => setView('tools') }, { title: 'AI assistant', action: () => setView('ai') },
+  ];
   useEffect(() => {
-    document.body.classList.toggle("theme-mac", osTheme === "mac");
-    document.body.classList.toggle("theme-win", osTheme === "win");
-  }, [osTheme]);
-
-  const renderEditorContent = () => {
-    if (currentFile === "Tools") {
-      return (
-        <ToolsPanel
-          fileName={toolTarget}
-          buffer={buffers[toolTarget] ?? ""}
-          onApplyToBuffer={(next) => setBuffers({ ...buffers, [toolTarget]: next })}
-        />
-      );
-    }
-
-    if (currentFile === "Settings") {
-      return (
-        <div className="preferences-ui">
-          <div className="pref-header">Settings</div>
-          <input className="pref-search" placeholder="Search settings (e.g. 'font size', 'theme')..." />
-
-          <div className="pref-section">
-            <h3>App (UI)</h3>
-            <div className="pref-row">
-              <div>
-                <div className="pref-label">Color Theme</div>
-                <div className="pref-desc">Specifies the OS Look and Feel theme.</div>
-              </div>
-              <select
-                className="pref-select"
-                value={osTheme}
-                onChange={(e) => setOsTheme(e.target.value as OsTheme)}
-              >
-                <option value="mac">macOS Translucent</option>
-                <option value="win">Windows / Linux Solid</option>
-              </select>
-            </div>
-            <div className="pref-row">
-              <div>
-                <div className="pref-label">Layout Architecture</div>
-                <div className="pref-desc">Control where the terminal and editor panels split.</div>
-              </div>
-              <select
-                className="pref-select"
-                value={layout}
-                onChange={(e) => setLayout(e.target.value as Layout)}
-              >
-                <option value="side-by-side">Side-by-Side (Vertical Split)</option>
-                <option value="stacked">Stacked (Horizontal Split)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="pref-section">
-            <h3>AI &amp; Developer Tools</h3>
-            <div className="pref-row">
-              <div>
-                <div className="pref-label">Code With Me: LLM Engine</div>
-                <div className="pref-desc">Model to use for real-time pair programming ghost comments.</div>
-              </div>
-              <select
-                className="pref-select"
-                value={llmEngine}
-                onChange={(e) => setLlmEngine(e.target.value)}
-              >
-                {LLM_ENGINES.map((engine) => (
-                  <option key={engine} value={engine}>{engine}</option>
-                ))}
-              </select>
-            </div>
-          </div>
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(p => !p); }
+      if (e.key === 'Escape') setPalette(false);
+    };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  });
+  return <div className="app-container">
+    <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => setPalette(true)}>Commands ⌘⇧P</button></header>
+    {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
+    <div className="main-content">
+      <nav className="activity-bar" aria-label="Workbench">{([
+        ['editor', Files, 'Files'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
+      ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => setView(id)}><Icon size={21} /></button>)}</nav>
+      <aside className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
+        {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
+        <div className="sidebar-content"><button className="file-item" onClick={() => { setActive(''); setView('editor'); }}>Scratch</button>
+          {directory && <div className="folder-location"><span title={directory}>{basename(directory)}</span><button aria-label="Refresh folder" onClick={() => void browse(directory).catch(report)}>↻</button>{directory !== root && <button onClick={() => void browse(parent(directory)).catch(report)}>Up</button>}</div>}
+          {entries.map(entry => <button className={`file-item ${active === entry.path ? 'active' : ''}`} key={entry.path} title={entry.path} onClick={() => void (entry.directory ? (setActive(''), browse(entry.path)) : openFile(entry.path)).catch(report)}>{entry.directory ? '▸' : '·'} {entry.name}</button>)}
         </div>
-      );
-    }
-
-    return (
-      <Editor
-        height="100%"
-        theme="vs-dark"
-        path={currentFile}
-        language={languageForFilename(currentFile)}
-        value={buffers[currentFile] ?? ""}
-        onChange={(v) => setBuffers({ ...buffers, [currentFile]: v ?? "" })}
-      />
-    );
-  };
-
-  return (
-    <div className="app-container">
-      {showCommandPalette && (
-        <div className="command-palette-overlay" onClick={() => setShowCommandPalette(false)}>
-          <div className="command-palette" onClick={(e) => e.stopPropagation()}>
-            <input className="cp-input" placeholder="Type a command..." autoFocus />
-            <div className="cp-list">
-              <div className="cp-item" onClick={() => { setActiveFile("Settings"); setShowCommandPalette(false); }}>
-                <span>Preferences: Open Settings (UI)</span> <span className="cp-shortcut">⌘,</span>
-              </div>
-              <div className="cp-item" onClick={() => { setShowCommandPalette(false); }}>
-                <span>Preferences: Open Settings (JSON)</span>
-              </div>
-              <div className="cp-item" onClick={() => { setShowCommandPalette(false); }}>
-                <span>Preferences: Open Keyboard Shortcuts</span> <span className="cp-shortcut">⌘K ⌘S</span>
-              </div>
-              <div className="cp-item" onClick={() => { setActiveFile("Tools"); setShowCommandPalette(false); }}>
-                <span>Developer: Open Tools (regex, base64, subnet, timestamps)</span>
-              </div>
-              <div className="cp-item" onClick={() => { setPairProgrammingOn(!pairProgrammingOn); setShowCommandPalette(false); }}>
-                <span>AI: Toggle Code With Me (Pair Programming)</span>
-              </div>
-            </div>
+      </aside>
+      <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
+        <main className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+          <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
+          <div className="editor-container">
+            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} /></Suspense></ErrorBoundary>}
+            {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
+            {view === 'ai' && <AiPanel context={value} instructions={config.instructions} />}
+            {view === 'extensions' && <section className="workbench-page"><h1>Extensions</h1><p>AfterEdit bundles Monaco language tokenizers and developer tools. VS Code extensions and VSIX packages are not currently supported.</p><p>Running VS Code extensions requires a compatible extension host and APIs. Open VSX is a candidate registry for that integration; registry access alone does not make extensions work.</p><p>Microsoft's Marketplace is not a general-purpose registry for third-party editors. No Marketplace endpoint is configured.</p></section>}
+            {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
+              <h2>Project and directory overrides</h2><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>
+              {layers.map(path => <button key={path} onClick={() => void openFile(path).catch(report)}>{path}</button>)}<p role="alert">{configError}</p><h2>Effective settings</h2><pre>{JSON.stringify(config, null, 2)}</pre>
+            </section>}
+            {view === 'tasks' && <section className="workbench-page"><h1>Build workflows</h1><p>Commands use installed toolchains. Configure executable paths, arguments, environment variables, working directories and dependencies in .afteredit.json.</p><button onClick={() => setView('settings')}>Configure build environment</button><button onClick={() => setRevision(n => n + 1)}>Reload rules</button><p role="alert">{configError}</p>
+              <label className="check"><input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} /> I trust the commands shown for this project scope.</label>
+              {Object.entries(config.tasks).map(([id, task]) => <div className="task-row" key={id}><div><strong>{id}</strong><code>{task.command} {task.args.join(' ')}</code><small>cwd: {task.cwd ?? '.'} · dependencies: {(task.dependsOn ?? []).join(', ') || 'none'}</small>{task.env && <pre>{JSON.stringify(task.env, null, 2)}</pre>}</div><button disabled={!trusted || running || !!configError} onClick={() => void run([id])}>Run</button></div>)}
+              {pendingTasks.length > 0 && <button disabled={!trusted || running || !!configError} onClick={() => void run(pendingTasks)}>Run tasks matched by save: {pendingTasks.join(', ')}</button>}
+              {config.rules.filter(r => r.event === 'manual' && matches(r.pattern, active.slice(activeRoot.length + 1).replace(/\\/g, '/'))).map((r,i) => <button key={i} disabled={!trusted || running || !!configError} onClick={() => void run(r.tasks)}>Run rule: {r.tasks.join(', ')}</button>)}
+              {running && <button onClick={() => { cancelled.current = true; void invoke('cancel_task').catch(report); }}>Stop workflow</button>}
+              <pre className="task-log" role="log">{runLog || 'Task output will appear here.'}</pre><p>Save rules queue matching tasks for review. No project command runs just because you open or save a file. Use **/*.go style patterns relative to the project root.</p>
+            </section>}
           </div>
-        </div>
-      )}
-
-      <div data-tauri-drag-region className="titlebar">
-        <div className="window-controls">
-          {osTheme === "mac" && (<><div className="mac-btn close"></div><div className="mac-btn min"></div><div className="mac-btn max"></div></>)}
-        </div>
-        <span>AfterEdit IDE</span>
-        <div className="theme-toggles">
-          <button onClick={() => setOsTheme("mac")} className={osTheme === "mac" ? "active" : ""}>Mac</button>
-          <button onClick={() => setOsTheme("win")} className={osTheme === "win" ? "active" : ""}>Win/Lin</button>
-        </div>
-      </div>
-
-      <div className="main-content">
-        <div className="activity-bar">
-          <Files className={`activity-icon ${activePanel === "explorer" ? "active" : ""}`} onClick={() => setActivePanel("explorer")} />
-          <Search className={`activity-icon ${activePanel === "search" ? "active" : ""}`} onClick={() => setActivePanel("search")} />
-          <GitBranch className={`activity-icon ${activePanel === "git" ? "active" : ""}`} onClick={() => setActivePanel("git")} />
-          <Bug className={`activity-icon ${activePanel === "debug" ? "active" : ""}`} onClick={() => setActivePanel("debug")} />
-
-          <Wrench
-            className={`activity-icon ${currentFile === "Tools" ? "active" : ""}`}
-            onClick={() => setActiveFile("Tools")}
-          />
-
-          <div className="activity-bottom">
-            <Settings className="activity-icon" onClick={() => setActiveFile("Settings")} />
-          </div>
-        </div>
-
-        <div className="sidebar">
-          <div className="sidebar-header">
-            {activePanel.toUpperCase()}
-            <LayoutPanelLeft size={14} style={{ cursor: "pointer" }} onClick={() => setLayout(layout === "stacked" ? "side-by-side" : "stacked")} />
-          </div>
-          <div className="sidebar-content">
-            {activePanel === "explorer" && (
-              <div className="file-tree">
-                {fileNames.map((name) => (
-                  <div
-                    key={name}
-                    className={`file-item ${currentFile === name ? "active" : ""}`}
-                    onClick={() => setActiveFile(name)}
-                  >
-                    <Code /> {name}
-                  </div>
-                ))}
-                <div
-                  className={`file-item ${currentFile === "Tools" ? "active" : ""}`}
-                  onClick={() => setActiveFile("Tools")}
-                >
-                  <Wrench /> Tools
-                </div>
-                <div
-                  className={`file-item ${currentFile === "Settings" ? "active" : ""}`}
-                  onClick={() => setActiveFile("Settings")}
-                >
-                  <Settings /> Settings
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className={`center-area layout-${layout}`}>
-          <div className="editor-area">
-            <div className="editor-tabs">
-              <div className="editor-tab active">{currentFile}</div>
-            </div>
-            <div className="breadcrumbs">
-              afteredit <ChevronRight size={12} style={{ margin: "0 4px" }} /> src <ChevronRight size={12} style={{ margin: "0 4px" }} /> <span style={{ color: "#dcdcaa" }}>{currentFile}</span>
-            </div>
-
-            <div className="editor-container">
-              {renderEditorContent()}
-            </div>
-          </div>
-
-          <div className="terminal-panel">
-            <div className="terminal-header"><Terminal size={12} style={{ marginRight: "5px" }} /> PTY Session</div>
-            <TerminalPanel theme={osTheme} />
-          </div>
-        </div>
-      </div>
-
-      <div className="status-bar">
-        <div className="status-left">
-          <div className="status-item"><GitBranch size={12} /> main</div>
-          <div className="status-item">0 errors, 0 warnings</div>
-        </div>
-        <div className="status-right">
-          <div className="status-item" onClick={() => setPairProgrammingOn(!pairProgrammingOn)} style={{ color: pairProgrammingOn ? "#00FF7F" : "#ccc" }}>
-            <Zap size={12} /> {pairProgrammingOn ? "Code With Me: Active" : "Code With Me: Paused"}
-          </div>
-        </div>
+        </main>
+        <section className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
     </div>
-  );
+    <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
+    {palette && <div className="command-palette-overlay" onClick={() => setPalette(false)}><div className="command-palette" role="dialog" aria-label="Command palette" onClick={e => e.stopPropagation()}><input className="cp-input" autoFocus placeholder="Search commands…" value={query} onChange={e => setQuery(e.target.value)} />{commands.filter(c => c.title.toLowerCase().includes(query.toLowerCase())).map(c => <button className="cp-item" key={c.title} onClick={() => { setPalette(false); c.action(); }}>{c.title}</button>)}</div></div>}
+  </div>;
 }
-
 export default App;

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # AfterEdit build script
 # Usage: ./build.sh [dev|release|bundle]
-#   dev     - Build debug version (default)
+#   dev     - Build standalone debug app (default; no dev server needed)
 #   release - Build optimized release version
 #   bundle  - Build and create distributable bundles (.dmg, .app, etc.)
 
@@ -48,12 +48,6 @@ install_deps() {
     fi
 }
 
-# Build frontend
-build_frontend() {
-    info "Building frontend (TypeScript + Vite)..."
-    npm run build
-}
-
 # Build Tauri app
 build_tauri() {
     local tauri_args=()
@@ -74,8 +68,10 @@ build_tauri() {
 
     if [[ "$MODE" == "bundle" ]]; then
         npm run tauri build "${tauri_args[@]}" --bundles all
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+        npm run tauri build "${tauri_args[@]}" --bundles app
     else
-        npm run tauri build "${tauri_args[@]}"
+        npm run tauri build "${tauri_args[@]}" --no-bundle
     fi
 }
 
@@ -89,9 +85,15 @@ show_artifacts() {
     case "$MODE" in
         dev)
             info "Debug binary: $target_dir/debug/afteredit"
+            if [[ -d "$target_dir/debug/bundle/macos/AfterEdit.app" ]]; then
+                info "Standalone app: $target_dir/debug/bundle/macos/AfterEdit.app"
+            fi
             ;;
         release)
             info "Release binary: $target_dir/release/afteredit"
+            if [[ -d "$target_dir/release/bundle/macos/AfterEdit.app" ]]; then
+                info "Standalone app: $target_dir/release/bundle/macos/AfterEdit.app"
+            fi
             ;;
         bundle)
             info "Bundles location: $target_dir/release/bundle/"
@@ -115,7 +117,7 @@ main() {
 
     check_deps
     install_deps
-    build_frontend
+    # Tauri runs npm run build through beforeBuildCommand, exactly once.
     build_tauri
     show_artifacts
 }
