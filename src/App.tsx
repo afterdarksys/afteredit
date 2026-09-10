@@ -13,7 +13,7 @@ import { restoreExtensions, type Extension } from './extensions';
 import PreferencesPanel from './PreferencesPanel';
 import { editorDefaults, validateEditor, savedText } from './preferences';
 import { usePersistedState } from './usePersistedState';
-import { defaults, matches, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
+import { defaults, matchingRules, expandTask, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
 const CodeEditor = lazy(() => import('./CodeEditor'));
 type Entry = { name: string; path: string; directory: boolean };
 type Buffer = { value: string; saved: string; disk: boolean };
@@ -42,6 +42,8 @@ function App() {
   const [configError, setConfigError] = useState('');
   const [revision, setRevision] = useState(0);
   const [preset, setPreset] = useState(Object.keys(presets)[0]);
+  const [historyJSON,setHistoryJSON]=usePersistedState('workflow.history.v1','[]');
+  const history: Array<{root:string;ids:string[];date:string;success:boolean}> = (()=>{try {const rows=JSON.parse(historyJSON);return Array.isArray(rows)?rows.filter(r=>r&&typeof r.root==='string'&&Array.isArray(r.ids)&&r.ids.every((id:unknown)=>typeof id==='string')&&typeof r.date==='string'&&typeof r.success==='boolean'):[];}catch{return [];}})();
   const [runLog, setRunLog] = useState('');
   const [running, setRunning] = useState(false);
   const [trusted, setTrusted] = useState(false);
@@ -143,23 +145,24 @@ function App() {
       setStatus(`Saved ${basename(path)}`);
       if (basename(path) === '.afteredit.json') { setRevision(n => n + 1); return; }
       const relative = path.slice(activeRoot.length + 1).replace(/\\/g, '/');
-      const ids = config.rules.filter(r => r.event === 'save' && matches(r.pattern, relative)).flatMap(r => r.tasks);
+      const ids = matchingRules(config,'save',relative).flatMap(r => r.tasks);
       if (ids.length) { setPendingTasks(ids); setView('tasks'); }
     } catch (e) { report(e); }
   }
   async function run(ids: string[]) {
     if (!trusted || configError || runningRef.current) return;
     runningRef.current = true; cancelled.current = false; setRunning(true); setRunLog(''); setPendingTasks([]);
+    let success=true;
     try {
       for (const id of taskOrder(config.tasks, ids)) {
         if (cancelled.current) break;
-        const task = config.tasks[id];
+        const task = expandTask(config.tasks[id],{project:activeRoot,file:activeBuffer?.disk?active:''});
         setRunLog(log => log + `\n> ${id}: ${task.command} ${task.args.join(' ')}\n`);
-        const code = await invoke<number>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
+        const {code} = await invoke<{code:number;output:string}>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
         setRunLog(log => log + `\n[exit ${code}]\n`);
         if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
       }
-    } catch (e) { setRunLog(log => log + '\n' + String(e)); } finally { runningRef.current = false; setRunning(false); }
+    } catch (e) { success=false;setRunLog(log => log + '\n' + String(e)); } finally { setHistoryJSON(JSON.stringify([{root:activeRoot,ids,date:new Date().toISOString(),success:success&&!cancelled.current},...history].slice(0,30)));runningRef.current = false; setRunning(false); }
   }
   async function configure() {
     try {
@@ -212,10 +215,12 @@ function App() {
             </section>}
             {view === 'tasks' && <section className="workbench-page"><h1>Build workflows</h1><p>Commands use installed toolchains. Configure executable paths, arguments, environment variables, working directories and dependencies in .afteredit.json.</p><button onClick={() => setView('settings')}>Configure build environment</button><button onClick={() => setRevision(n => n + 1)}>Reload rules</button><p role="alert">{configError}</p>
               <label className="check"><input type="checkbox" checked={trusted} onChange={e => setTrusted(e.target.checked)} /> I trust the commands shown for this project scope.</label>
+              {Object.entries(config.workflows).map(([name,ids])=><button key={name} disabled={!trusted||running||!!configError} onClick={()=>void run(ids)}>Run workflow: {name} ({taskOrder(config.tasks,ids).join(' → ')})</button>)}
               {Object.entries(config.tasks).map(([id, task]) => <div className="task-row" key={id}><div><strong>{id}</strong><code>{task.command} {task.args.join(' ')}</code><small>cwd: {task.cwd ?? '.'} · dependencies: {(task.dependsOn ?? []).join(', ') || 'none'}</small>{task.env && <pre>{JSON.stringify(task.env, null, 2)}</pre>}</div><button disabled={!trusted || running || !!configError} onClick={() => void run([id])}>Run</button></div>)}
               {pendingTasks.length > 0 && <button disabled={!trusted || running || !!configError} onClick={() => void run(pendingTasks)}>Run tasks matched by save: {pendingTasks.join(', ')}</button>}
-              {config.rules.filter(r => r.event === 'manual' && matches(r.pattern, active.slice(activeRoot.length + 1).replace(/\\/g, '/'))).map((r,i) => <button key={i} disabled={!trusted || running || !!configError} onClick={() => void run(r.tasks)}>Run rule: {r.tasks.join(', ')}</button>)}
+              {matchingRules(config,'manual',active.slice(activeRoot.length + 1).replace(/\\/g,'/')).map((r,i) => <button key={i} disabled={!trusted || running || !!configError} onClick={() => void run(r.tasks)}>Run rule: {r.tasks.join(', ')}</button>)}
               {running && <button onClick={() => { cancelled.current = true; void invoke('cancel_task').catch(report); }}>Stop workflow</button>}
+              <details><summary>Recent workflow runs</summary>{history.filter(h=>h.root===activeRoot).map((h,i)=><p key={i}>{h.date} · {h.ids.join(", ")} · {h.success?"Passed":"Failed / stopped"}</p>)}</details>
               <pre className="task-log" role="log">{runLog || 'Task output will appear here.'}</pre><p>Save rules queue matching tasks for review. No project command runs just because you open or save a file. Use **/*.go style patterns relative to the project root.</p>
             </section>}
           </div>

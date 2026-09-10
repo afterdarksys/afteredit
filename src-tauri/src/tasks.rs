@@ -14,6 +14,13 @@ pub struct Task {
     command: String,
     args: Vec<String>,
     env: Option<HashMap<String, String>>,
+    #[serde(rename = "timeoutSeconds")]
+    timeout_seconds: Option<u64>,
+}
+#[derive(Serialize)]
+pub struct TaskResult {
+    code: i32,
+    output: String,
 }
 #[derive(Clone, Serialize)]
 struct Output {
@@ -22,6 +29,7 @@ struct Output {
 fn reader(
     mut input: impl Read + Send + 'static,
     app: tauri::AppHandle,
+    capture: Arc<Mutex<String>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -29,6 +37,16 @@ fn reader(
         while let Ok(n) = input.read(&mut buf) {
             if n == 0 {
                 break;
+            }
+            if let Ok(mut text) = capture.lock() {
+                text.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if text.len() > 200000 {
+                    let mut cut = text.len() - 200000;
+                    while !text.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    text.drain(..cut);
+                }
             }
             let _ = app.emit(
                 "task:output",
@@ -47,7 +65,11 @@ pub async fn run_task(
     root: String,
     cwd: String,
     task: Task,
-) -> Result<i32, String> {
+) -> Result<TaskResult, String> {
+    let timeout = task.timeout_seconds.unwrap_or(900);
+    if !(1..=3600).contains(&timeout) {
+        return Err("Timeout must be 1–3600 seconds".into());
+    }
     let directory = crate::workspace::task_directory(workspace, root, cwd)?;
     let running = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -92,8 +114,9 @@ pub async fn run_task(
         })?;
         *guard = Some(child.id());
         drop(guard);
-        let _out = reader(child.stdout.take().unwrap(), app.clone());
-        let _err = reader(child.stderr.take().unwrap(), app);
+        let capture = Arc::new(Mutex::new(String::new()));
+        let _out = reader(child.stdout.take().unwrap(), app.clone(), capture.clone());
+        let _err = reader(child.stderr.take().unwrap(), app, capture.clone());
         let start = Instant::now();
         let result = loop {
             match child.try_wait() {
@@ -101,11 +124,11 @@ pub async fn run_task(
                 Err(e) => break Err(e.to_string()),
                 _ => {}
             }
-            if start.elapsed() > Duration::from_secs(900) {
+            if start.elapsed() > Duration::from_secs(timeout) {
                 kill(child.id());
                 let _ = child.kill();
                 let _ = child.wait();
-                break Err("Task stopped after the 15 minute timeout".into());
+                break Err(format!("Task stopped after {timeout} seconds"));
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -114,7 +137,10 @@ pub async fn run_task(
         let _ = _out.join();
         let _ = _err.join();
         *running.lock().map_err(|e| e.to_string())? = None;
-        result
+        result.map(|code| TaskResult {
+            code,
+            output: capture.lock().map(|text| text.clone()).unwrap_or_default(),
+        })
     })
     .await
     .map_err(|e| e.to_string())?

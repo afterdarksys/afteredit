@@ -1,12 +1,12 @@
 import { editorDefaults, validateEditor, type EditorPreferences } from './preferences.ts';
-export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[] };
-export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[] };
-export type ProjectConfig = { editor: EditorPreferences; tasks: Record<string, Task>; rules: Rule[]; instructions: string };
-export const defaults: ProjectConfig = { editor: editorDefaults, tasks: {}, rules: [], instructions: '' };
+export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number };
+export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[]; exclude?: string[]; enabled?: boolean };
+export type ProjectConfig = { editor: EditorPreferences; tasks: Record<string, Task>; rules: Rule[]; workflows: Record<string,string[]>; instructions: string };
+export const defaults: ProjectConfig = { editor: editorDefaults, tasks: {}, rules: [], workflows: {}, instructions: '' };
 function record(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 function strings(v: unknown): v is string[] { return Array.isArray(v) && v.every(x => typeof x === 'string'); }
 export function resolveConfig(layers: unknown[]): ProjectConfig {
-  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, tasks: {} };
+  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, tasks: {}, workflows: {} };
   for (const layer of layers) {
     if (!record(layer)) throw new Error('Configuration must be an object');
     if (layer.editor !== undefined) {
@@ -20,13 +20,16 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
         if (task.cwd !== undefined && typeof task.cwd !== 'string') throw new Error(`Invalid cwd in ${id}`);
         if (task.dependsOn !== undefined && !strings(task.dependsOn)) throw new Error(`Invalid dependencies in ${id}`);
         if (task.env !== undefined && (!record(task.env) || !Object.values(task.env).every(v => typeof v === 'string'))) throw new Error(`Invalid environment in ${id}`);
+        if(task.timeoutSeconds!==undefined && (!Number.isInteger(task.timeoutSeconds)||Number(task.timeoutSeconds)<1||Number(task.timeoutSeconds)>3600)) throw new Error(`Invalid timeout in ${id}`);
         result.tasks[id] = task as Task;
       }
     }
     if (layer.rules !== undefined) {
       if (!Array.isArray(layer.rules) || !layer.rules.every(r => record(r) && ['save', 'manual'].includes(String(r.event)) && typeof r.pattern === 'string' && strings(r.tasks))) throw new Error('Invalid rules');
+      for(const r of layer.rules as Rule[]) {if(r.exclude!==undefined&&!strings(r.exclude))throw new Error('Rule excludes must be globs');if(r.enabled!==undefined&&typeof r.enabled!=='boolean')throw new Error('Rule enabled must be boolean');}
       result.rules = layer.rules as Rule[];
     }
+    if(layer.workflows!==undefined){if(!record(layer.workflows))throw new Error('workflows must be an object');for(const [name,ids] of Object.entries(layer.workflows)){if(['__proto__','constructor','prototype'].includes(name)||!strings(ids))throw new Error('Invalid named workflow');result.workflows[name]=ids;}}
     if (layer.instructions !== undefined) {
       if (typeof layer.instructions !== 'string') throw new Error('instructions must be text');
       result.instructions = layer.instructions;
@@ -34,6 +37,7 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
   }
   for (const id of Object.keys(result.tasks)) taskOrder(result.tasks, [id]);
   for (const rule of result.rules) taskOrder(result.tasks, rule.tasks);
+  for(const ids of Object.values(result.workflows)) taskOrder(result.tasks,ids);
   return result;
 }
 export function taskOrder(tasks: Record<string, Task>, ids: string[]): string[] {
@@ -78,3 +82,16 @@ export const presets: Record<string, Record<string, Task>> = {
   Perl: { configure: { command: 'perl', args: ['Makefile.PL'] }, build: { command: 'make', args: [], dependsOn: ['configure'] }, test: { command: 'prove', args: ['-lr', 't'] } },
   Bash: { check: { command: 'bash', args: ['-n', 'build.sh'] }, build: { command: 'bash', args: ['build.sh'], dependsOn: ['check'] } },
 };
+
+export function matchingRules(config:ProjectConfig,event:Rule['event'],path:string):Rule[]{
+ return config.rules.filter(r=>r.enabled!==false&&r.event===event&&matches(r.pattern,path)&&!(r.exclude??[]).some(pattern=>matches(pattern,path)));
+}
+export function expandTask(task:Task,context:{project:string;file:string}):Task {
+ const values:Record<string,string>={project:context.project,file:context.file,relativeFile:context.file.slice(context.project.length+1),fileDir:context.file.replace(/[\\/][^\\/]+$/,'')};
+ const expand=(text:string)=>text.replace(/\$\{([^}]+)\}/g,(_,key:string)=>{
+  if(!Object.prototype.hasOwnProperty.call(values,key))throw new Error(`Unknown task variable: ${key}`);
+  if(key!=='project'&&!context.file)throw new Error(`Task variable ${key} needs an active file`);
+  return values[key];
+ });
+ return {...task,command:expand(task.command),args:task.args.map(expand),cwd:expand(task.cwd??'.'),env:task.env?Object.fromEntries(Object.entries(task.env).map(([key,value])=>[key,expand(value)])):undefined};
+}

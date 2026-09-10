@@ -17,3 +17,15 @@ test('save globs match root and nested paths without regex injection', () => {
 test('every build environment has a valid dependency graph', () => {
   for (const tasks of Object.values(presets)) assert.doesNotThrow(() => resolveConfig([{tasks}]));
 });
+import { expandTask, matchingRules } from './workflows.ts';
+test('named workflows validate dependencies and exclusions suppress rules',()=>{
+ const c=resolveConfig([{tasks:{test:{command:'go',args:['test']}},workflows:{ci:['test']},rules:[{event:'save',pattern:'**/*.go',exclude:['vendor/**'],tasks:['test']}]}]);
+ assert.equal(matchingRules(c,'save','vendor/x.go').length,0);assert.equal(matchingRules(c,'save','main.go').length,1);
+ assert.throws(()=>resolveConfig([{workflows:{ci:['missing']}}]));
+});
+test('task variables remain literal argv and timeout settings are validated',()=>{
+ const task=expandTask({command:'echo',args:['${file}','${relativeFile}'],env:{SOURCE:'${fileDir}'}},{project:'/repo',file:'/repo/a $(whoami).go'});
+ assert.deepEqual(task.args,['/repo/a $(whoami).go','a $(whoami).go']);
+ assert.throws(()=>expandTask({command:'echo',args:['${unknown}']},{project:'/repo',file:''}));
+ assert.throws(()=>resolveConfig([{tasks:{test:{command:'go',args:[],timeoutSeconds:0}}}]));
+});

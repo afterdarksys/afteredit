@@ -170,3 +170,14 @@ Project search is literal/case-sensitive, bounded to 200 matches, 20,000 entries
 and three seconds. It skips symlinks, generated/vendor directories, binary content
 and files over 1 MiB. Results open the matching line. Extension data is stored in
 local application preferences; a storage-capacity error is shown if it cannot fit.
+
+### Named workflows and task tuning
+
+Add `"workflows": { "ci": ["test", "web"] }` to name a pipeline. Dependencies run
+once in order and failures stop the pipeline. Rules can set `enabled: false` or
+`exclude: ["vendor/**", "**/generated/**"]`. Tasks accept `timeoutSeconds` (1–3600;
+default 900). Arguments, working directories and environment values may reference
+`${project}`, `${file}`, `${relativeFile}`, and `${fileDir}`. Substitution preserves
+literal argument boundaries; shell interpretation occurs only if you explicitly
+configure a shell command. File variables require an active disk file.
+The workbench records the last 30 workflow outcomes, filtered by project.
