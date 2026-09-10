@@ -11,6 +11,15 @@
     "test": "node --experimental-strip-types --test src/tools/*.test.ts src/*.test.ts"
   },
   "dependencies": {
+    "@codingame/monaco-vscode-api": "36.2.7",
+    "@codingame/monaco-vscode-configuration-service-override": "36.2.7",
+    "@codingame/monaco-vscode-editor-api": "36.2.7",
+    "@codingame/monaco-vscode-editor-service-override": "36.2.7",
+    "@codingame/monaco-vscode-extensions-service-override": "36.2.7",
+    "@codingame/monaco-vscode-keybindings-service-override": "36.2.7",
+    "@codingame/monaco-vscode-languages-service-override": "36.2.7",
+    "@codingame/monaco-vscode-model-service-override": "36.2.7",
+    "@codingame/monaco-vscode-notifications-service-override": "36.2.7",
     "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",

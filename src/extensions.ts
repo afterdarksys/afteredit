@@ -1,8 +1,9 @@
+import { importWebVSIX, validateWebExtension, type WebExtension } from './webExtensions.ts';
 import { unzipSync, strFromU8 } from 'fflate';
 import { parse, type ParseError } from 'jsonc-parser';
 export type Theme = { id: string; label: string; base: 'vs' | 'vs-dark' | 'hc-black'; colors: Record<string,string>; rules: Array<{token:string;foreground?:string;background?:string;fontStyle?:string}> };
 export type Snippet = { label: string; prefix: string; body: string; description: string; languages: string[] };
-export type Extension = { id: string; version: string; enabled: boolean; themes: Theme[]; snippets: Snippet[] };
+export type Extension = { id: string; version: string; enabled: boolean; themes: Theme[]; snippets: Snippet[]; web?: WebExtension };
 function json(text: string): any {
  const errors: ParseError[]=[]; const value=parse(text,errors,{allowTrailingComma:true});
  if(errors.length || !value || typeof value!=='object' || Array.isArray(value)) throw new Error('Invalid JSON contribution');
@@ -21,7 +22,8 @@ export function importVSIX(bytes: Uint8Array): Extension {
  const read=(path:string)=>{ const normalized=path.replace(/^\.\//,''); if(normalized.split('/').includes('..')||normalized.includes('\\')||normalized.startsWith('/')) throw new Error('Invalid contribution path'); const data=files['extension/'+normalized]; if(!data) throw new Error(`Missing contribution: ${path}`); return json(strFromU8(data)); };
  const manifest=read('package.json');
  if(!/^[\w-]+$/.test(manifest.publisher??'') || !/^[\w-]+$/.test(manifest.name??'') || typeof manifest.version!=='string') throw new Error('Invalid extension identity');
- if(manifest.main || manifest.browser || manifest.extensionDependencies?.length) throw new Error('This extension requires a VS Code extension host and cannot run in AfterEdit yet.');
+ if(manifest.browser) { const web=importWebVSIX(bytes);return {id:`${manifest.publisher}.${manifest.name}`,version:manifest.version,enabled:false,themes:[],snippets:[],web}; }
+ if(manifest.main || manifest.extensionDependencies?.length) throw new Error('This extension requires a VS Code extension host and cannot run in AfterEdit yet.');
  const contributions=manifest.contributes??{};
  if(Object.keys(contributions).some(key=>!['themes','snippets'].includes(key))) throw new Error('Only theme and snippet contributions are currently supported.');
  const extension:Extension={id:`${manifest.publisher}.${manifest.name}`,version:manifest.version,enabled:true,themes:[],snippets:[]};
@@ -56,7 +58,7 @@ export function restoreExtensions(text:string):Extension[] {
  try {
   const data=JSON.parse(text);
   if(!Array.isArray(data)||data.length>64) return [];
-  return data.filter((e:any)=>e&&typeof e.id==='string'&&typeof e.version==='string'&&typeof e.enabled==='boolean'&&Array.isArray(e.themes)&&Array.isArray(e.snippets)&&
+  return data.filter((e:any)=>e&&typeof e.id==='string'&&typeof e.version==='string'&&typeof e.enabled==='boolean'&&(!e.web||validateWebExtension(e.web))&&Array.isArray(e.themes)&&Array.isArray(e.snippets)&&
     e.themes.every((t:any)=>t&&typeof t.id==='string'&&typeof t.label==='string'&&['vs','vs-dark','hc-black'].includes(t.base)&&t.colors&&typeof t.colors==='object'&&Object.values(t.colors).every(v=>typeof v==='string')&&Array.isArray(t.rules)&&t.rules.every((r:any)=>r&&typeof r.token==='string'&&['foreground','background','fontStyle'].every(k=>r[k]===undefined||typeof r[k]==='string')))&&
     e.snippets.every((s:any)=>s&&['label','prefix','body','description'].every(k=>typeof s[k]==='string')&&Array.isArray(s.languages)&&s.languages.every((l:any)=>typeof l==='string')));
  }catch{return [];}

@@ -129,14 +129,56 @@ are separate. Provider calls and the complete agent UI have not been live-tested
 
 ## Extensions and language services
 
-Executable VS Code extensions **do not run in this build**. Monaco is an
-editor component, not the VS Code extension host. A compatible host, API layer,
-lifecycle management and extension testing are required before exposing installs.
-Open VSX search and import are available for declarative themes and snippets. Microsoft Marketplace use
-also has product restrictions; no Marketplace API is configured.
+An **experimental VS Code web-extension editor** is available under Extensions.
+It uses pinned `@codingame/monaco-vscode-api` services and the VS Code web-worker
+extension host in a separate editor frame. The regular editor remains the default.
 
-See the [Monaco FAQ](https://github.com/microsoft/monaco-editor#faq) and
-[VS Code FAQ](https://code.visualstudio.com/docs/supporting/faq).
+Search Open VSX and select **Install / update**, or import a `.vsix`. Themes and
+snippets continue to work in the regular editor. Packages with a `browser` entry
+can be imported disabled; choose **Enable and trust code**, then **Open experimental
+VS Code editor**. Use its command selector to activate an extension command. Updating,
+disabling or removing a package recreates the compatibility frame when opened.
+There is no background update service. Package data uses local browser storage;
+large installs can exceed its quota and will fail with an explicit message.
+
+| Extension capability | Prototype support |
+| --- | --- |
+| Themes and snippets | Existing regular editor integration |
+| Browser entry, commands, configuration, language registration, keybindings | Experimental VS Code runtime |
+| Formatters/completion providers registered through the web API | Runtime included; activation and edits still require interactive verification |
+| Desktop Node entry only, dependencies, proposed APIs | Rejected |
+| Debuggers, TextMate grammar packages, webviews and other contribution types | Rejected |
+
+The compatibility editor shares the active buffer with AfterEdit; Save and Cmd/Ctrl+S
+use existing native conflict checks. It exposes no native project filesystem or task
+bridge, and only the current document model. Standard keybindings and basic editor
+preferences apply there; Vim/Emacs, native LSP connections and existing themes remain
+in the regular editor. Extension configuration is currently runtime-local. Full
+workspace APIs, extension settings persistence and extension keybinding fidelity
+are not yet verified. Use the standard editor to return without discarding the buffer.
+
+Browser extensions execute code: enable only trusted packages. A web worker is not
+a general security sandbox. The native CSP permits `unsafe-eval` because VS Code's
+worker loads CommonJS extension bundles with `new Function`; blob reads are also
+permitted for registered package resources. Native IPC APIs are not supplied to the
+extension API. Remote network availability depends on the host's CSP.
+
+Microsoft Marketplace is not configured: Microsoft's published FAQ excludes
+alternative editors from accessing it without separate authorization. Open VSX is
+our registry; individual extension licensing and API compatibility still apply.
+See [Microsoft's FAQ](https://code.visualstudio.com/docs/supporting/faq),
+[Open VSX](https://open-vsx.org/), and the
+[runtime project](https://github.com/CodinGame/monaco-vscode-api).
+
+To build validation packages, run `node scripts/build-extension-fixtures.mjs`.
+Import `/tmp/afteredit-extension-fixtures/web.vsix`, enable it, open a plain-text
+buffer in the experimental editor, and run **Test extension activation**. The
+expected result is “VS Code extension activated successfully”. Run **Test formatter:
+uppercase buffer** to verify provider registration, model access and buffer edits,
+then save and return to the standard editor. The `desktop.vsix` and `debugger.vsix`
+fixtures must be rejected. Browser automation is unavailable in the implementation
+session, so these interactive checks are **not yet verified**. Unit tests cover
+package validation and persistence; successful bundling is not an activation test.
 
 Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy and
 Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
@@ -145,7 +187,7 @@ Diagnostics, completion, hover, definition and document formatting are supported
 when advertised by the server. Refactoring/code actions and debugging are not yet supported. Git/search/debug sidebar
 placeholders and the simulated AI status have been removed. Monaco's in-file
 find remains available. Integrated Git, DAP, remote development,
-and extension hosting are future work.
+and desktop extension hosting are future work.
 
 The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
 it as `$EDITOR` yet.
