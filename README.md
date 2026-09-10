@@ -94,11 +94,12 @@ commands. Trust resets when the project scope/configuration changes.
 ## BYOK and agents
 
 The AI panel sends requests through the native HTTP client to a user-configured
-OpenAI-compatible Chat Completions endpoint. Enter an endpoint, model ID and key;
+OpenAI-compatible Chat Completions or Anthropic Messages endpoint. Enter an endpoint, model ID and key;
 keys stay in memory and are never written to preferences or project files.
 Remote endpoints require HTTPS; local HTTP is supported. Redirects are disabled.
-Compatibility is limited to endpoints accepting `messages`, `max_tokens` and
-`stream: false` and returning `choices[0].message.content`.
+OpenAI-compatible endpoints can use `max_tokens` or `max_completion_tokens` and
+return `choices[0].message.content`. Anthropic uses its Messages protocol and text
+content blocks. Requests are non-streaming.
 
 The active file is included only when explicitly selected. Effective project
 instructions are displayed and included. Requests have a 120-second timeout,
@@ -111,10 +112,20 @@ remain charged on failures/timeouts and reset on the next UTC day. They are loca
 app usage controls, not exact token counts or provider dollar-budget guarantees.
 Users can change their caps. No paid provider calls are made by the test suite.
 
-The panel provides advice and plans, not autonomous file editing or tool execution.
-Interactive agent CLIs can run in the terminal; noninteractive agent commands can
-be configured as tasks. Their billing is separate from the AI panel's limits.
-Full autonomous multi-step agent orchestration is not implemented.
+Agent runs loop through model requests and tool observations with separate step
+and reservation caps, enforced together with daily caps before each request.
+The model can read existing project files, propose unique exact-text replacements,
+and request named configured tasks. Reads require approval unless enabled for the
+run; edits and tasks always require review. Task environment values are not sent
+as model task metadata. File reads remain within the selected project root.
+Approved edits update unsaved buffers; use Save all modified project files before
+approving a build. Saves retain external-change checks. Stop prevents subsequent
+actions and cancels a running task; an in-flight model request may finish and
+retains its reservation. Keys and provider settings are captured for each run.
+
+This is a reviewed agent workflow, without arbitrary shell tools or unattended
+edits. Interactive agent CLIs can also run in the terminal; their billing and limits
+are separate. Provider calls and the complete agent UI have not been live-tested.
 
 ## Extensions and language services
 

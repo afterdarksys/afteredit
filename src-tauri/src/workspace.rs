@@ -370,3 +370,28 @@ pub async fn workspace_search(
     .await
     .map_err(error)?
 }
+
+#[tauri::command]
+pub fn project_file_path(
+    state: tauri::State<'_, WorkspaceState>,
+    root: String,
+    relative: String,
+) -> Result<String, String> {
+    let root = allowed(&state, Path::new(&root))?;
+    let candidate = Path::new(&relative);
+    if candidate.is_absolute()
+        || candidate.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err("File path must stay inside the agent project".into());
+    }
+    let path = allowed(&state, &root.join(candidate))?;
+    if !path.starts_with(&root) || !path.is_file() {
+        return Err("File is outside the agent project".into());
+    }
+    Ok(path.to_string_lossy().into_owned())
+}

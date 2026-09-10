@@ -7,6 +7,7 @@ import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
+import { relativePath, replaceUnique } from './agent';
 import LanguagePanel from './LanguagePanel';
 import { detectBuildSystems, type ConnectedServer } from './languageServices';
 import SearchPanel from './SearchPanel';
@@ -33,6 +34,7 @@ function App() {
   const [scratch, setScratch] = usePersistedState('scratch.v2', '// Welcome to AfterEdit. Open a file or a project to begin.\n');
   const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
   const [revealLine,setRevealLine]=useState(0);
+  const buffersRef=useRef(buffers);buffersRef.current=buffers;
   const [active, setActive] = useState('');
   const [roots, setRoots] = useState<string[]>([]);
   const [root, setRoot] = useState('');
@@ -153,20 +155,48 @@ function App() {
       if (ids.length) { setPendingTasks(ids); setView('tasks'); }
     } catch (e) { report(e); }
   }
-  async function run(ids: string[]) {
-    if (!trusted || configError || runningRef.current) return;
+  async function run(ids: string[], approved=false):Promise<string> {
+    if ((!trusted&&!approved) || configError || runningRef.current) throw new Error('Workflow unavailable: trust commands, wait for configuration, or stop the running task.');
     runningRef.current = true; cancelled.current = false; setRunning(true); setRunLog(''); setPendingTasks([]);
-    let success=true;
+    let success=true;let transcript='';
     try {
       for (const id of taskOrder(config.tasks, ids)) {
         if (cancelled.current) break;
         const task = expandTask(config.tasks[id],{project:activeRoot,file:activeBuffer?.disk?active:''});
         setRunLog(log => log + `\n> ${id}: ${task.command} ${task.args.join(' ')}\n`);
-        const {code} = await invoke<{code:number;output:string}>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
+        const {code,output} = await invoke<{code:number;output:string}>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
+        transcript+=`\n${id}:\n${output}\n[exit ${code}]\n`;
         setRunLog(log => log + `\n[exit ${code}]\n`);
         if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
       }
-    } catch (e) { success=false;setRunLog(log => log + '\n' + String(e)); } finally { setHistoryJSON(JSON.stringify([{root:activeRoot,ids,date:new Date().toISOString(),success:success&&!cancelled.current},...history].slice(0,30)));runningRef.current = false; setRunning(false); }
+    } catch (e) { success=false;transcript+='\n'+String(e);setRunLog(log => log + '\n' + String(e)); } finally { setHistoryJSON(JSON.stringify([{root:activeRoot,ids,date:new Date().toISOString(),success:success&&!cancelled.current},...history].slice(0,30)));runningRef.current = false; setRunning(false); }
+    return (success&&!cancelled.current?"Workflow succeeded":"Workflow failed or stopped")+transcript;
+  }
+  async function agentRead(relative:string):Promise<string>{
+    const path=await invoke<string>('project_file_path',{root:activeRoot,relative:relativePath(relative)});
+    return buffersRef.current[path]?.value??await invoke<string>('read_file',{path});
+  }
+  async function agentEdit(relative:string,oldText:string,newText:string):Promise<string>{
+    const path=await invoke<string>('project_file_path',{root:activeRoot,relative:relativePath(relative)});
+    const disk=await invoke<string>('read_file',{path});
+    const existing=buffersRef.current[path]??{value:disk,saved:disk,disk:true};
+    const value=replaceUnique(existing.value,oldText,newText);
+    buffersRef.current={...buffersRef.current,[path]:{...existing,value}};
+    setBuffers(current=>({...current,[path]:{...existing,value}}));
+    return `Edited unsaved buffer ${relative}. Save it before running tasks.`;
+  }
+  async function saveProjectEdits(){
+    for(const [path,buffer] of Object.entries(buffersRef.current)){
+      if(!(path.startsWith(activeRoot+'/')||path.startsWith(activeRoot+'\\'))||buffer.value===buffer.saved)continue;
+      await invoke('save_file',{path,content:buffer.value,expected:buffer.saved});
+      setBuffers(current=>({...current,[path]:{...current[path],saved:buffer.value}}));
+      window.dispatchEvent(new CustomEvent('afteredit:saved',{detail:{path,text:buffer.value}}));
+    }
+    setRevision(n=>n+1);
+  }
+  async function agentTask(name:string):Promise<string>{
+    if(Object.entries(buffersRef.current).some(([path,b])=>(path.startsWith(activeRoot+'/')||path.startsWith(activeRoot+'\\'))&&b.value!==b.saved))throw new Error('Save modified project buffers before approving a task.');
+    return run([name],true);
   }
   async function configure() {
     try {
@@ -210,7 +240,7 @@ function App() {
           <div className="editor-container">
             {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} /></Suspense></ErrorBoundary>}
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
-            {view === 'ai' && <AiPanel context={value} instructions={config.instructions} />}
+            {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
             {view === 'languages' && <LanguagePanel root={activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
             {view === 'search' && <SearchPanel root={activeRoot} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}

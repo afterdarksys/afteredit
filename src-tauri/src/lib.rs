@@ -26,7 +26,7 @@ pub fn run() {
             lsp_installer::check_and_install_lsp,
             workspace::choose_path,
             workspace::list_directory,
-            workspace::read_file, workspace::workspace_search,
+            workspace::read_file, workspace::project_file_path, workspace::workspace_search,
             workspace::save_file,
             workspace::save_as,
             workspace::confirm_discard,
