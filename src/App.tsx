@@ -1,3 +1,4 @@
+import OutputLog from './OutputLog';
 import { AccessibilityContext, useReducedMotion } from './AccessibilityContext';
 import CommandPalette from './CommandPalette';
 import { cycleRegion, focusRegion } from './focus';
@@ -187,6 +188,7 @@ function App() {
         if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
       }
     } catch (e) { success=false;transcript+='\n'+String(e);setRunLog(log => log + '\n' + String(e)); } finally { setHistoryJSON(JSON.stringify([{root:activeRoot,ids,date:new Date().toISOString(),success:success&&!cancelled.current},...history].slice(0,30)));runningRef.current = false; setRunning(false); }
+    setStatus(success&&!cancelled.current ? "Workflow succeeded" : "Workflow failed or stopped");
     return (success&&!cancelled.current?"Workflow succeeded":"Workflow failed or stopped")+transcript;
   }
   async function agentRead(relative:string):Promise<string>{
@@ -282,13 +284,15 @@ function App() {
               {matchingRules(config,'manual',active.slice(activeRoot.length + 1).replace(/\\/g,'/')).map((r,i) => <button key={i} disabled={!trusted || running || !!configError} onClick={() => void run(r.tasks)}>Run rule: {r.tasks.join(', ')}</button>)}
               {running && <button onClick={() => { cancelled.current = true; void invoke('cancel_task').catch(report); }}>Stop workflow</button>}
               <details><summary>Recent workflow runs</summary>{history.filter(h=>h.root===activeRoot).map((h,i)=><p key={i}>{h.date} · {h.ids.join(", ")} · {h.success?"Passed":"Failed / stopped"}</p>)}</details>
-              <pre className="task-log" role="log">{runLog || 'Task output will appear here.'}</pre><p>Save rules queue matching tasks for review. No project command runs just because you open or save a file. Use **/*.go style patterns relative to the project root.</p>
+              <OutputLog label="Workflow output">{runLog || 'Task output will appear here.'}</OutputLog><p>Save rules queue matching tasks for review. No project command runs just because you open or save a file. Use **/*.go style patterns relative to the project root.</p>
             </section>}
           </div>
         </main>
         <section id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
     </div>
+    <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>
+    <span className="sr-only" role="status" aria-atomic="true">{debug.phase==="paused" ? `Debugger paused at ${debug.frame?.source?.path ?? "unknown source"}, line ${debug.frame?.line ?? "unknown"}` : ""}</span>
     <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
     {palette && <CommandPalette commands={commands} onClose={()=>setPalette(false)}/>}
   </div></AccessibilityContext.Provider>;

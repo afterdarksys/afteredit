@@ -1,3 +1,4 @@
+import OutputLog from './OutputLog';
 import {listen} from '@tauri-apps/api/event';
 import {useEffect,useRef,useState} from 'react';
 import {invoke,isTauri} from '@tauri-apps/api/core';
@@ -25,6 +26,6 @@ export default function InfrastructurePanel({root,file,dirty,detected,onDiagnost
  <p>Terraform and OpenTofu validation initializes dependencies with the backend disabled. Plan/trace actions use your configured backend and credentials. Ansible check mode follows module check-mode support. Review the exact commands below.</p><pre>{configError||JSON.stringify(plan,null,2)}</pre><label className="check"><input type="checkbox" checked={trusted} disabled={busy} onChange={e=>setTrusted(e.target.checked)}/> Trust and run these commands for this project</label>
  {dirty&&<p>Save modified files before checking; tools read the files on disk.</p>}<button disabled={!isTauri()||!root||!trusted||busy||!!configError||dirty} onClick={()=>void run()}>Run selected action</button>{busy&&<button onClick={()=>{cancelled.current=true;void invoke('cancel_task').catch(e=>setStatus(String(e)));}}>Stop action</button>}<button onClick={()=>onConfigure(kind)}>Create scoped workflow configuration</button>
  <h2>Debugging</h2>{kind==='Ansible'?<><p>For task breakpoints and variable inspection, install Ansibug in the Python environment containing Ansible. Run debug-listen here, then choose the Ansible attach preset in Run and debug. This attaches to localhost:4712. Use a dedicated Python executable in a project workflow when needed.</p><button onClick={onDebug}>Open Run and debug</button></>:<p>Use trace-plan for engine/provider logs, or show-plan for an existing plan.out. Terraform/OpenTofu configuration is declarative and does not expose source stepping through DAP. To step through provider source, configure the Go debugger separately. Trace output and plan JSON can contain sensitive values.</p>}
- <p role="status">{status}</p><h2>Problems</h2>{problems.map((p,i)=><button className="search-hit" key={i} onClick={()=>onOpen(p.path,p.line)}>{p.severity} · {p.path}:{p.line}:{p.column}<code>{p.message}</code></button>)}<pre className="task-log" role="log">{output||'Command output appears here.'}</pre>
+ <p role="status">{status}</p><h2>Problems</h2>{problems.map((p,i)=><button className="search-hit" key={i} onClick={()=>onOpen(p.path,p.line)}>{p.severity} · {p.path}:{p.line}:{p.column}<code>{p.message}</code></button>)}<OutputLog label="Infrastructure command output">{output||'Command output appears here.'}</OutputLog>
  </section>;
 }
