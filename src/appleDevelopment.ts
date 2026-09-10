@@ -59,3 +59,21 @@ export function appleDiagnostics(text:string,root:string,cwd='.'):Infrastructure
   diagnostics.push({path,line:Number(m[2]),column:Number(m[3]??1),message:m[5],severity:m[4]==='note'?'info':m[4] as 'error'|'warning',source:'Apple'});
  }return diagnostics;
 }
+export type AppleSimulator={id:string;name:string;runtime:string;state:string;available:boolean};
+export function appleSimulators(text:string):AppleSimulator[]{
+ const data=JSON.parse(text);return Object.entries(data.devices??{}).flatMap(([runtime,devices])=>Array.isArray(devices)?devices.filter(d=>typeof d.udid==='string').map(d=>({id:d.udid,name:String(d.name??d.udid),runtime,state:String(d.state??'Unknown'),available:d.isAvailable===true})):[]);
+}
+export function simulatorAction(id:string,action:'boot'|'shutdown'|'install'|'launch',app:string,bundle:string):Task[]{
+ if(!/^[0-9a-f-]{36}$/i.test(id))throw new Error('Select a simulator UUID.');
+ if(action==='boot')return [{command:'/usr/bin/xcrun',args:['simctl','bootstatus',id,'-b'],timeoutSeconds:300},{command:'/usr/bin/open',args:['-a','Simulator']}];
+ if(action==='shutdown')return [{command:'/usr/bin/xcrun',args:['simctl','shutdown',id]}];
+ if(action==='install'){if(!applePath(app).endsWith('.app'))throw new Error('Choose a built .app bundle.');return [{command:'/usr/bin/xcrun',args:['simctl','install',id,app]}];}
+ if(!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundle))throw new Error('Supply the app bundle identifier.');
+ return [{command:'/usr/bin/xcrun',args:['simctl','launch',id,bundle]}];
+}
+export type AppleProduct={name:string;app:string;bundle:string;executable:string;team:string;signing:string};
+export function appleProducts(text:string,root:string):AppleProduct[]{
+ const rows=JSON.parse(text);if(!Array.isArray(rows))throw new Error('Invalid Xcode build settings');
+ return rows.map(row=>{const s=row.buildSettings??{};const relative=(path:string)=>path.startsWith(root+'/')?path.slice(root.length+1):'';
+ return {name:String(row.target??''),app:relative(String(s.TARGET_BUILD_DIR??'')+'/'+String(s.FULL_PRODUCT_NAME??'')),bundle:String(s.PRODUCT_BUNDLE_IDENTIFIER??''),executable:relative(String(s.TARGET_BUILD_DIR??'')+'/'+String(s.EXECUTABLE_PATH??'')),team:String(s.DEVELOPMENT_TEAM??''),signing:String(s.CODE_SIGN_STYLE??'')};});
+}

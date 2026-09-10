@@ -25,3 +25,11 @@ test('Apple diagnostics preserve spaces and discard paths outside the workspace'
  const result=appleDiagnostics('/repo/My File.swift:3:7: error: Broken\n/repo/Test.swift:9: error: Failed\n/outside/a.swift:1:1: warning: Wrong','/repo');
  assert.equal(result.length,2);assert.equal(result[0].column,7);assert.equal(result[1].column,1);
 });
+import {appleSimulators,simulatorAction,appleProducts} from './appleDevelopment.ts';
+test('simulator actions target an explicit device and app bundle',()=>{
+ const id='12345678-1234-1234-1234-123456789ABC';assert.throws(()=>simulatorAction('booted','launch','','com.example.app'),/UUID/);
+ assert.deepEqual(simulatorAction(id,'boot','','')[0].args,['simctl','bootstatus',id,'-b']);
+ assert.throws(()=>simulatorAction(id,'install','../App.app',''),/relative/);
+ assert.equal(appleSimulators('{"devices":{"iOS":[{"udid":"id","isAvailable":false}]}}')[0].available,false);
+ assert.equal(appleProducts('[{"target":"App","buildSettings":{"TARGET_BUILD_DIR":"/repo/out","FULL_PRODUCT_NAME":"App.app"}}]','/repo')[0].app,'out/App.app');
+});

@@ -54,11 +54,12 @@ fn within(root:&Path,path:&str)->Result<PathBuf,String>{
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all="camelCase")]
-pub struct Query {kind:String,#[serde(default)]project:String,#[serde(default)]scheme:String,#[serde(default)]target:String,#[serde(default)]configuration:String,#[serde(default)]path:String}
+pub struct Query {kind:String,#[serde(default)]project:String,#[serde(default)]scheme:String,#[serde(default)]target:String,#[serde(default)]configuration:String,#[serde(default)]path:String,#[serde(default)]destination:String}
 fn value(value:&str)->Result<(),String>{if value.len()>1000||value.starts_with('-')||value.contains(['\0','\n','\r']){Err("Invalid Apple tool argument.".into())}else{Ok(())}}
 fn query(root:&Path,q:Query)->Result<String,String>{
- for v in [&q.scheme,&q.target,&q.configuration]{value(v)?;}
+ for v in [&q.scheme,&q.target,&q.configuration,&q.destination]{value(v)?;}
  if q.kind=="results"{let path=within(root,&q.path)?;if path.extension().and_then(|v|v.to_str())!=Some("xcresult"){return Err("Select an xcresult bundle.".into());}return run(root,"/usr/bin/xcrun",&["xcresulttool","get","test-results","summary","--path",&path.to_string_lossy(),"--compact"]);}
+ if q.kind=="simulators"{return run(root,"/usr/bin/xcrun",&["simctl","list","devices","--json"]);}
  let project=within(root,&q.project)?;
  if project.file_name().and_then(|v|v.to_str())==Some("Package.swift") {
   if q.kind!="metadata"{return Err("Swift packages use Swift build/test commands, not Xcode destinations.".into());}
@@ -68,8 +69,9 @@ fn query(root:&Path,q:Query)->Result<String,String>{
  let mut args=vec![kind.to_string(),project.to_string_lossy().into_owned()];
  match q.kind.as_str(){"metadata"=>args.extend(["-list".into(),"-json".into()]),"destinations"|"settings"=>{
   if q.scheme.is_empty()&&q.target.is_empty(){return Err("Select a scheme or target first.".into());}
-  if !q.scheme.is_empty(){args.extend(["-scheme".into(),q.scheme]);}else{args.extend(["-target".into(),q.target]);}
+  if !q.scheme.is_empty(){args.extend(["-scheme".into(),q.scheme.clone()]);}else{args.extend(["-target".into(),q.target]);}
   if !q.configuration.is_empty(){args.extend(["-configuration".into(),q.configuration]);}
+  if q.kind=="settings"{if !q.destination.is_empty(){args.extend(["-destination".into(),q.destination]);}if !q.scheme.is_empty(){args.extend(["-derivedDataPath".into(),root.join(".afteredit/apple/DerivedData").to_string_lossy().into()]);}else{args.extend([format!("SYMROOT={}",root.join(".afteredit/apple/Products").display()),format!("OBJROOT={}",root.join(".afteredit/apple/Intermediates").display())]);}}
   if q.kind=="destinations"{args.push("-showdestinations".into());}else{args.extend(["-showBuildSettings".into(),"-json".into()]);}
  },_=>return Err("Unsupported Apple query.".into())}
  run(root,"/usr/bin/xcodebuild",&args.iter().map(String::as_str).collect::<Vec<_>>())
