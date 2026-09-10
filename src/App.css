@@ -238,3 +238,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .debug-panel { flex:0 0 340px; width:340px; padding:12px; border-left:1px solid #444; font-size:12px; }
 .debug-panel h2 { margin-top:0; }.debug-panel input,.debug-panel textarea,.debug-panel select { max-width:100%;width:100%; }.debug-panel input[type=checkbox]{width:auto;}.debug-panel summary{cursor:pointer;padding:8px 0;}.debug-panel .debug-frame{display:block;text-align:left;width:100%;}.debug-output{white-space:pre-wrap;max-height:220px;overflow:auto;}.debug-variables{padding-left:8px;overflow-wrap:anywhere;}.debug-breakpoint::after{content:'●';color:#ff6464;display:block;text-align:center;}.debug-breakpoint-pending::after{content:'○';color:#ff9393;display:block;text-align:center;}.debug-current-line{background:rgba(255,205,70,.18);}
+
+/* Accessibility: scale the complete workbench while preserving viewport layout. */
+.app-container :focus-visible { outline: 3px solid #69bfff; outline-offset: -3px; }
+.main-content { height: auto; overflow: auto; }
+.activity-bar { overflow-y: auto; flex-shrink: 0; }
+.titlebar, .status-bar { flex-shrink: 0; height: auto; min-height: 28px; flex-wrap: wrap; gap: 6px; }
+.titlebar { min-height: 38px; }
+.field-row, .explorer-actions { flex-wrap: wrap; }
+.command-palette { max-width: calc(100% - 24px); }
+.app-container[data-contrast="dark"] { --a11y-bg:#000; --a11y-fg:#fff; --a11y-focus:#ffeb3b; }
+.app-container[data-contrast="light"] { --a11y-bg:#fff; --a11y-fg:#000; --a11y-focus:#003dad; }
+.app-container[data-contrast="dark"], .app-container[data-contrast="light"] {
+  --bg-color:var(--a11y-bg); --text-primary:var(--a11y-fg); --text-active:var(--a11y-fg);
+}
+.app-container[data-contrast="dark"] :where(header,footer,nav,aside,section,button,input,textarea,select,label,p,h1,h2,h3,small,summary,pre,code,.breadcrumbs,.sidebar-header,.terminal-header,.keymap-status,.notice,.tools-body,.tool-row,.tool-row-label,.tool-output-block),
+.app-container[data-contrast="light"] :where(header,footer,nav,aside,section,button,input,textarea,select,label,p,h1,h2,h3,small,summary,pre,code,.breadcrumbs,.sidebar-header,.terminal-header,.keymap-status,.notice,.tools-body,.tool-row,.tool-row-label,.tool-output-block) {
+  background:var(--a11y-bg); color:var(--a11y-fg); border-color:var(--a11y-fg);
+}
+.app-container[data-contrast="dark"] :focus-visible, .app-container[data-contrast="light"] :focus-visible { outline-color:var(--a11y-focus); }
+.app-container button[aria-pressed="true"] { text-decoration:underline; text-underline-offset:4px; }
+.app-container button:disabled { opacity:.65; }
+.app-container[data-reduced-motion="true"] *, .app-container[data-reduced-motion="true"] *::before, .app-container[data-reduced-motion="true"] *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+@media (prefers-reduced-motion: reduce) {
+  .app-container *, .app-container *::before, .app-container *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
+@media (forced-colors: active) {
+  .app-container :focus-visible { outline:3px solid Highlight; }
+  .app-container button[aria-pressed="true"] { border:2px solid Highlight; }
+}
+@media (max-width: 800px) {
+  .sidebar { width:160px; }
+  .center-area.layout-side-by-side { flex-direction:column; }
+  .center-area.layout-side-by-side .terminal-panel { height:180px; flex:0 0 180px; }
+  .workbench-page { padding:12px; }
+}
