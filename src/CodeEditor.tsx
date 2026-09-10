@@ -8,6 +8,7 @@ import type { Breakpoint } from './debugging';
 import * as monaco from 'monaco-editor';
 import './monaco-setup';
 import { connectModel } from './lspClient';
+import { syncExternalFormatters, formatText } from './externalFormatting';
 import type { ConnectedServer } from './languageServices';
 import { activateExtensions } from './extensionRuntime';
 import type { Extension } from './extensions';
@@ -39,6 +40,25 @@ export default function CodeEditor({ menuRequest, onReady, infrastructureDiagnos
   const callbacks=useRef({onNavigate,onError});callbacks.current={onNavigate,onError};
   useEffect(()=>{if(!instance)return;const server=servers.find(s=>s.language===languageForFilename(path)&&(path.startsWith(s.root+'/')||path.startsWith(s.root+'\\')));if(server)return connectModel(instance,path,server,(p,l)=>callbacks.current.onNavigate(p,l),e=>callbacks.current.onError(e));},[instance,path,servers]);
   useEffect(()=>{if(!instance||!options.shellBlockCompletion||options.keymap==='vim'||languageForFilename(path)!=='shell')return;const listener=instance.onKeyDown(e=>{if(e.keyCode!==monaco.KeyCode.Enter||e.shiftKey||e.ctrlKey||e.altKey||e.metaKey)return;const model=instance.getModel(),selection=instance.getSelection();if(!model||!selection||!selection.isEmpty()||selection.endColumn!==model.getLineMaxColumn(selection.endLineNumber))return;const row=selection.endLineNumber;const following=row<model.getLineCount()?model.getValueInRange(new monaco.Range(row+1,1,model.getLineCount(),model.getLineMaxColumn(model.getLineCount()))):'';const block=shellClosingBlock(model.getLineContent(row),following);if(!block)return;e.preventDefault();e.stopPropagation();const unit=options.insertSpaces?' '.repeat(options.tabSize):'\t',eol=model.getEOL();instance.pushUndoStop();instance.executeEdits('shell-block',[{range:selection,text:eol+block.indent+unit+eol+block.indent+block.close}]);instance.setPosition({lineNumber:row+1,column:block.indent.length+unit.length+1});instance.pushUndoStop();});return()=>listener.dispose();},[instance,path,options.shellBlockCompletion,options.tabSize,options.insertSpaces,options.keymap]);
+  // External formatters are a fallback: registered only for languages no
+  // connected server is formatting, and dropped as soon as one takes over.
+  useEffect(()=>{void syncExternalFormatters(servers,message=>callbacks.current.onError(message));},[servers]);
+  useEffect(()=>{
+    if(!instance)return;
+    const action=instance.addAction({
+      id:'afteredit.formatExternal',
+      label:'Format Document (external tool)',
+      contextMenuGroupId:'1_modification',
+      run:async editor=>{
+        const model=editor.getModel();if(!model)return;
+        try{
+          const outcome=await formatText(model.getLanguageId(),model.getValue());
+          if(outcome.changed)editor.executeEdits('afteredit.formatExternal',[{range:model.getFullModelRange(),text:outcome.text}]);
+        }catch(error){callbacks.current.onError(String(error));}
+      },
+    });
+    return ()=>action.dispose();
+  },[instance]);
   const status = useRef<HTMLDivElement>(null);
   const save = useRef(onSave); save.current = onSave;
   useEffect(() => {

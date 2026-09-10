@@ -5,10 +5,10 @@ use std::{process::Command,time::Duration};
 pub struct ToolInfo {name:String,available:bool,path:Option<String>,version:String}
 fn probe(name:&str)->ToolInfo {
  let executable=if name=="ansibug"{"python3"}else{name};
- let Some(path)=crate::lsp_installer::resolve_binary(executable) else{return ToolInfo{name:name.into(),available:false,path:None,version:format!("{executable} was not found on the application PATH.")};};
+ let Some(path)=crate::toolpath::resolve_binary(executable) else{return ToolInfo{name:name.into(),available:false,path:None,version:format!("{executable} was not found on the application PATH.")};};
  let mut command=Command::new(&path);
  command.current_dir(std::env::temp_dir());
- if let Ok(path)=std::env::join_paths(crate::lsp_installer::search_dirs()){command.env("PATH",path);}
+ if let Ok(path)=std::env::join_paths(crate::toolpath::search_dirs()){command.env("PATH",path);}
  if name=="ansibug"{command.args(["-I","-c","import importlib.metadata; print(importlib.metadata.version('ansibug'))"]);}else{command.arg("--version");}
  match crate::process::run(command,Duration::from_secs(5)){
   Ok(output) if output.code==0=>ToolInfo{name:name.into(),available:true,path:Some(path.to_string_lossy().into()),version:output.stdout.lines().take(3).collect::<Vec<_>>().join("\n")},

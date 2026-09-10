@@ -8,7 +8,7 @@ pub struct GitFile {pub path:String,pub original_path:Option<String>,pub index:S
 pub struct GitStatus {branch:String,files:Vec<GitFile>}
 fn git(root:&Path,args:&[&str])->Result<Output,String>{git_index(root,args,None)}
 fn git_index(root:&Path,args:&[&str],index:Option<&Path>)->Result<Output,String>{
-    let binary=crate::lsp_installer::resolve_binary("git").ok_or("Git was not found. Install Git and reopen AfterEdit.")?;
+    let binary=crate::toolpath::resolve_binary("git").ok_or("Git was not found. Install Git and reopen AfterEdit.")?;
     let mut command=Command::new(binary);
     command.current_dir(root).args(["--no-pager","--literal-pathspecs"]).args(args);
     for (key,_) in std::env::vars_os(){if key.to_string_lossy().starts_with("GIT_"){command.env_remove(key);}}

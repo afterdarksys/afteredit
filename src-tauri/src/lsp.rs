@@ -131,7 +131,7 @@ pub fn lsp_start(
         return Err("Disconnect a language server before starting another (maximum 8)".into());
     }
     let mut cmd = Command::new(command);
-    if let Ok(path)=std::env::join_paths(crate::lsp_installer::search_dirs()){cmd.env("PATH",path);}
+    if let Ok(path)=std::env::join_paths(crate::toolpath::search_dirs()){cmd.env("PATH",path);}
     cmd.args(args)
         .envs(env)
         .current_dir(&root)

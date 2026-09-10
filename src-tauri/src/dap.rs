@@ -178,7 +178,7 @@ fn connect(
             .filter(|v| !v.trim().is_empty())
             .ok_or("Supply a debug adapter command")?;
         let mut cmd = Command::new(command);
-        if let Ok(path) = std::env::join_paths(crate::lsp_installer::search_dirs()) {
+        if let Ok(path) = std::env::join_paths(crate::toolpath::search_dirs()) {
             cmd.env("PATH", path);
         }
         cmd.args(adapter.args)

@@ -6,15 +6,16 @@
 //!    installs anything without an explicit OS confirmation dialog, and the
 //!    package name is only ever read from `SUPPORTED` below -- never from the
 //!    webview. The frontend can pick a language key, nothing more.
-//! 2. A bundled `.app` launched from Finder inherits launchd's minimal PATH
-//!    (`/usr/bin:/bin:/usr/sbin:/sbin`), not the login shell's, so plain
-//!    `which brew` fails on most Macs. We search an augmented path instead.
+//! 2. Tool lookup goes through `toolpath`, not `which`: a GUI process does
+//!    not inherit the login shell's PATH, so `which brew` fails on most Macs.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+use crate::toolpath::{resolve_binary, tail};
 
 const EVENT_PROGRESS: &str = "lsp:progress";
 
@@ -26,67 +27,6 @@ const SUPPORTED: &[(&str, &str, &str)] = &[
     ("typescript", "typescript-language-server", "typescript-language-server"),
     ("javascript", "typescript-language-server", "typescript-language-server"),
 ];
-
-/// Directories a GUI process won't have on PATH but where these tools live.
-const EXTRA_BIN_DIRS: &[&str] = &[
-    "/opt/homebrew/bin",                    // Homebrew, Apple Silicon
-    "/usr/local/bin",                       // Homebrew, Intel
-    "/opt/local/bin",                       // MacPorts
-    "/home/linuxbrew/.linuxbrew/bin",       // Linuxbrew
-];
-
-fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
-}
-
-pub(crate) fn search_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).collect())
-        .unwrap_or_default();
-
-    for extra in EXTRA_BIN_DIRS {
-        let dir = PathBuf::from(extra);
-        if !dirs.contains(&dir) {
-            dirs.push(dir);
-        }
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        for suffix in [".cargo/bin", ".local/bin"] {
-            let dir = PathBuf::from(&home).join(suffix);
-            if !dirs.contains(&dir) {
-                dirs.push(dir);
-            }
-        }
-    }
-    dirs
-}
-
-pub(crate) fn resolve_binary(name: &str) -> Option<PathBuf> {
-    search_dirs()
-        .into_iter()
-        .map(|dir| dir.join(name))
-        .find(|candidate| is_executable(candidate))
-}
-
-/// Keep failure output short enough to fit in a toast without truncating the
-/// part that actually says what went wrong (which is at the end).
-fn tail(text: &str, limit: usize) -> String {
-    let trimmed = text.trim();
-    match trimmed.char_indices().nth_back(limit.saturating_sub(1)) {
-        Some((start, _)) if start > 0 => format!("...{}", &trimmed[start..]),
-        _ => trimmed.to_string(),
-    }
-}
 
 fn confirm_install(app: &AppHandle, binary: &str, brew: &Path, formula: &str) -> bool {
     app.dialog()

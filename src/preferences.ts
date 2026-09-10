@@ -8,7 +8,7 @@ export const editorDefaults = {
   smoothScrolling: false, bracketPairColorization: true, stickyScroll: true,
   folding: true, formatOnPaste: false, formatOnType: false, scrollBeyondLastLine: false,
   keymap: 'standard' as 'standard' | 'vim' | 'emacs', theme: 'vs-dark',
-  trimTrailingWhitespace: false, insertFinalNewline: false,
+  trimTrailingWhitespace: false, insertFinalNewline: false, formatOnSave: false,
 };
 export type EditorPreferences = typeof editorDefaults;
 export function validateEditor(value: unknown): Partial<EditorPreferences> {

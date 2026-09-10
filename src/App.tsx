@@ -31,6 +31,8 @@ import ExtensionsPanel from './ExtensionsPanel';
 import { restoreExtensions, type Extension } from './extensions';
 import PreferencesPanel from './PreferencesPanel';
 import { editorDefaults, validateEditor, savedText } from './preferences';
+import { formatText } from './externalFormatting';
+import { languageForFilename } from './languages';
 import { usePersistedState } from './usePersistedState';
 import { defaults, matchingRules, expandTask, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
 const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
@@ -237,7 +239,13 @@ function App() {
   }
   async function save() {
     if (!activeBuffer?.disk) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
-    const snapshot = savedText(activeBuffer.value, config.editor), path = active;
+    let formatted = activeBuffer.value;
+    if (config.editor.formatOnSave) {
+      // Best effort: a missing or failing formatter must never block a save.
+      try { formatted = (await formatText(languageForFilename(active), formatted)).text; }
+      catch (e) { setStatus(`Saved without formatting: ${String(e)}`); }
+    }
+    const snapshot = savedText(formatted, config.editor), path = active;
     if (snapshot !== activeBuffer.value) update(snapshot);
     try {
       await invoke('save_file', { path, content: snapshot, expected: activeBuffer.saved });
