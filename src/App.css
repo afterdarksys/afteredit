@@ -235,3 +235,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .keymap-status { flex-shrink: 0; min-height: 22px; padding: 2px 12px; background: #252b33; color: #b9dfff; font: 12px monospace; }
 .search-hit { display:block; width:100%; text-align:left; margin:8px 0; }
 .search-hit code { display:block; white-space:pre-wrap; overflow-wrap:anywhere; }
+
+.debug-panel { flex:0 0 340px; width:340px; padding:12px; border-left:1px solid #444; font-size:12px; }
+.debug-panel h2 { margin-top:0; }.debug-panel input,.debug-panel textarea,.debug-panel select { max-width:100%;width:100%; }.debug-panel input[type=checkbox]{width:auto;}.debug-panel summary{cursor:pointer;padding:8px 0;}.debug-panel .debug-frame{display:block;text-align:left;width:100%;}.debug-output{white-space:pre-wrap;max-height:220px;overflow:auto;}.debug-variables{padding-left:8px;overflow-wrap:anywhere;}.debug-breakpoint::after{content:'●';color:#ff6464;display:block;text-align:center;}.debug-breakpoint-pending::after{content:'○';color:#ff9393;display:block;text-align:center;}.debug-current-line{background:rgba(255,205,70,.18);}

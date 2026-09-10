@@ -8,7 +8,7 @@ export function connectModel(editor:monaco.editor.IStandaloneCodeEditor,path:str
  const model=editor.getModel();if(!model)return ()=>{};
  const uri=monaco.Uri.file(path).toString();const disposables:monaco.IDisposable[]=[];let disposed=false;let version=1;
  const notify=(method:string,params:unknown)=>invoke('lsp_notify',{session:server.id,method,params});
- let sync=notify('textDocument/didOpen',{textDocument:{uri,languageId:model.getLanguageId(),version,text:model.getValue()}}).catch(e=>onError(String(e)));
+ let sync=notify('textDocument/didOpen',{textDocument:{uri,languageId:server.documentLanguage??model.getLanguageId(),version,text:model.getValue()}}).catch(e=>onError(String(e)));
  const request=async(method:string,params:unknown)=>{await sync;if(disposed)return null;return invoke<any>('lsp_request',{session:server.id,method,params});};
  const parameters=(position:monaco.Position)=>({textDocument:{uri},position:{line:position.lineNumber-1,character:position.column-1}});
  const onSave=(event:Event)=>{const detail=(event as CustomEvent<{path:string;text:string}>).detail;if(detail.path===path)sync=sync.then(()=>notify('textDocument/didSave',{textDocument:{uri},text:detail.text})).catch(e=>onError(String(e)));};

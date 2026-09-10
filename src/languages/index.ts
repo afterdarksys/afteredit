@@ -1,3 +1,6 @@
+import { infrastructureLanguage, infrastructureSnippets } from '../infrastructure';
+import { shellSnippets } from '../smartEditing';
+import { conf as yamlConf, language as yamlLanguage } from 'monaco-editor/languages/definitions/yaml/yaml';
 import * as monaco from "monaco-editor";
 import { registerToml } from "./toml";
 import { registerMakefile } from "./makefile";
@@ -6,6 +9,10 @@ import { registerRego } from "./rego";
 
 /** Languages Monaco does not ship but a devops/devsecops toolchain needs. */
 export function registerExtraLanguages() {
+  monaco.languages.register({id:'ansible',aliases:['Ansible']});
+  monaco.languages.setLanguageConfiguration('ansible',yamlConf);
+  monaco.languages.setMonarchTokensProvider('ansible',yamlLanguage as monaco.languages.IMonarchLanguage);
+  for(const [language,entries] of Object.entries({...infrastructureSnippets,shell:shellSnippets}))monaco.languages.registerCompletionItemProvider(language,{provideCompletionItems(model,position){const word=model.getWordUntilPosition(position);return {suggestions:entries.map(entry=>({label:entry.label,kind:monaco.languages.CompletionItemKind.Snippet,detail:'Built-in '+language+' block',insertText:entry.body,insertTextRules:monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,range:new monaco.Range(position.lineNumber,word.startColumn,position.lineNumber,word.endColumn)}))};}});
   const known = new Set(monaco.languages.getLanguages().map((l) => l.id));
   if (!known.has("toml")) registerToml();
   if (!known.has("makefile")) registerMakefile();
@@ -53,6 +60,7 @@ function buildLookup(): Map<string, string> {
 
 /** Filename (or path) -> Monaco language id, "plaintext" when unknown. */
 export function languageForFilename(filename: string): string {
+  const infrastructure=infrastructureLanguage(filename);if(infrastructure)return infrastructure;
   // Languages register lazily, so don't cache an empty map.
   if (!lookup || lookup.size === 0) lookup = buildLookup();
 

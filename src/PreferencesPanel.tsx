@@ -4,7 +4,7 @@ export default function PreferencesPanel({ value, onChange }: { value: EditorPre
   const [query, setQuery] = useState('');
   const [json, setJson] = useState('');
   const [error, setError] = useState('');
-  const choices: Record<string, string[]> = { wordWrap:['on','off'], lineNumbers:['on','off','relative'], renderWhitespace:['none','boundary','selection','all'], cursorStyle:['line','block','underline'], cursorBlinking:['blink','smooth','solid'], keymap:['standard','vim','emacs'], theme:['vs-dark','vs','hc-black','hc-light'] };
+  const choices: Record<string, string[]> = { autoClosingBrackets:['always','languageDefined','beforeWhitespace','never'],autoClosingQuotes:['always','languageDefined','beforeWhitespace','never'],autoSurround:['languageDefined','quotes','brackets','never'],autoIndent:['none','keep','brackets','advanced','full'],tabCompletion:['on','off','onlySnippets'],wordWrap:['on','off'], lineNumbers:['on','off','relative'], renderWhitespace:['none','boundary','selection','all'], cursorStyle:['line','block','underline'], cursorBlinking:['blink','smooth','solid'], keymap:['standard','vim','emacs'], theme:['vs-dark','vs','hc-black','hc-light'] };
   const label = (key: string) => key.replace(/[A-Z]/g, c => ' ' + c.toLowerCase());
   return <section><h2>Personal editor preferences</h2><p>These defaults persist across projects. A project's .afteredit.json can override them. Vim includes normal/insert/visual modes, motions and search; Emacs includes navigation, mark and kill/yank bindings.</p>
     <input aria-label="Search preferences" placeholder="Find a preference…" value={query} onChange={e => setQuery(e.target.value)} />

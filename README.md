@@ -184,9 +184,9 @@ Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy 
 Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
 Other languages can connect installed LSP servers through Language Services.
 Diagnostics, completion, hover, definition and document formatting are supported
-when advertised by the server. Refactoring/code actions and debugging are not yet supported. Git/search/debug sidebar
+when advertised by the server. Refactoring/code actions are not yet supported. The native Run and debug panel provides DAP debugging independently of executable extension support. Git/search/debug sidebar
 placeholders and the simulated AI status have been removed. Monaco's in-file
-find remains available. Integrated Git, DAP, remote development,
+find remains available. Integrated Git, remote development,
 and desktop extension hosting are future work.
 
 The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
@@ -256,3 +256,142 @@ servers can be removed and reconnected in the Language Services panel.
 Settings detects build manifests in the current explorer directory, including mixed
 language projects. Presets configure commands; toolchain installation/version selection
 remains the responsibility of the project's existing build tools.
+
+
+## Editing assistance
+
+The regular Monaco editor pairs braces, brackets, parentheses and quotes according
+to language rules. Preferences now expose auto-closing, surrounding selections,
+auto-indent and Tab completion controls. Two-space indentation is the default; Detect indentation can adopt an existing file’s indentation.
+For visual double spacing, set line height explicitly (for example 28 px with a
+14 px font); this changes rendering, not file contents.
+
+Bash snippets expand `if`, `for`, `while` and `case` into complete blocks. With Shell
+block completion enabled, Enter at the end of a completed header inserts `fi`,
+`done` or `esac`, with the cursor on an indented body line. It avoids adding a
+terminator already present below. This is conservative header matching, not a
+complete shell parser. Automatic Enter expansion is disabled in Vim mode; snippets
+remain available. These built-ins apply to the regular editor, not the experimental
+extension frame.
+
+## Native Run and debug
+
+Open a project, save its files, then use Run and debug. Choose or edit an adapter
+configuration, review it, and check Trust and run before Start. AfterEdit supports
+one native DAP session at a time, either a launched stdio adapter or an existing
+adapter listening on a localhost TCP port. Install adapters separately.
+
+The panel includes gutter/line breakpoints, conditional and hit-count breakpoints,
+logpoints, exception-filter IDs, continue/pause/step controls, thread selection,
+call stacks, scopes, expandable variables, variable editing when supported, and
+expression evaluation with one watched expression refreshed on each pause. Variable
+and stack references are discarded on resume. Views page the first 100 stack frames
+and first 200 variables; variable trees expand to eight levels. Breakpoints refer
+to saved line numbers: recheck them after structural source edits.
+
+Adapter capabilities gate optional operations. Launch configuration waits for the
+adapter's initialized event before breakpoints/configurationDone, without waiting
+for a launch response that may itself depend on configurationDone. Stop disconnects
+and closes our adapter; attach requests leave the target running where the adapter
+supports that behavior. Reverse requests including runInTerminal are not implemented.
+Use internalConsole or an existing target/adapter. Memory views, disassembly,
+reverse debugging, multi-session orchestration and debugger-extension installation
+are not included.
+
+Project/directory `.afteredit.json` can define named `debug` configurations:
+
+```json
+{
+  "debug": {
+    "native": {
+      "adapter": { "command": "xcrun", "args": ["lldb-dap"] },
+      "request": "launch",
+      "configuration": {
+        "program": "${workspaceFolder}/build/program",
+        "cwd": "${workspaceFolder}",
+        "stopOnEntry": true
+      }
+    }
+  }
+}
+```
+
+`${workspaceFolder}` and `${file}` expand recursively as literal values. Local
+configuration can also be saved per project in the panel. Go/Delve and js-debug
+presets connect to existing localhost DAP servers; they do not start those servers.
+
+The LLDB integration test is opt-in:
+`cargo test --manifest-path src-tauri/Cargo.toml lldb_breakpoint_stack_variables_and_step -- --ignored`.
+It builds a local C fixture and checks a breakpoint, stack, variable, expression,
+step and exit. Native launch verification can require macOS developer debugging
+permission. UI interactions still require manual testing in the packaged app.
+
+## Terraform, OpenTofu and Ansible
+
+Infrastructure is a built-in workbench page. It recognizes Terraform/OpenTofu
+configuration, variable and state filenames and Ansible playbook/role conventions.
+HCL and Ansible block snippets ship with the editor. Ansible uses the bundled YAML
+tokenizer with a distinct language ID; generic YAML files retain YAML mode.
+
+Select a tool and action, review the exact command/dependency list, and enable trust
+before running. No command runs when merely opening the page. Built-ins include:
+
+- Terraform/OpenTofu: format, format-check, backend-disabled init plus JSON
+  validation, TFLint, plan/trace-plan, existing plan JSON and native CLI tests.
+- Ansible: syntax check, offline ansible-lint SARIF, check/diff, list-tasks and an
+  Ansibug listener for debugging.
+
+Terraform/OpenTofu validation JSON, TFLint JSON and ansible-lint SARIF map to clickable
+Problems entries and editor markers. Editing clears inline markers; the Problems
+list represents the last disk check. Checks require saved project buffers.
+Tool output remains visible when diagnostics have no source location or parsing
+fails. CLI tools, providers, lint rules, language servers and Ansible collections
+are external dependencies; bundling their workflow does not install them.
+
+Creating a scoped configuration from these presets also includes terraform-ls,
+tofu-ls or ansible-language-server settings. Connect that server explicitly under
+Language services. HCL tokenization maps to the appropriate Terraform/OpenTofu LSP
+language ID. `.tf` projects may be either Terraform or OpenTofu, so detection offers
+both rather than selecting an engine automatically.
+
+Terraform/OpenTofu debugging uses trace logs and plan inspection; declarative
+configuration has no DAP source stepping. Provider source can be debugged separately
+with Go tooling. Plans and trace logs can contain sensitive data. Trace/plan actions
+use your configured backend; validation initialization explicitly disables it.
+
+For Ansible task stepping, install Ansibug in a Python environment containing
+Ansible. Start `debug-listen` from Infrastructure (localhost port 4712), then use
+Run and debug's Ansible attach preset. The listener remains running when switching
+views; stop it from Infrastructure. Use matching Python executable paths in the
+workflow and adapter when virtual environments are involved. Ansibug launch requires
+runInTerminal, so this version uses its supported attach flow. Ansible check mode
+follows each module's check-mode behavior and is not a universal no-side-effects
+sandbox. No remote playbook or infrastructure apply is run by the test suite.
+
+`node scripts/test-infrastructure.mjs` checks real Terraform/OpenTofu diagnostics
+against a provider-free invalid fixture and Ansible syntax against a localhost
+playbook. The unit suite separately covers SARIF/TFLint parsing and path confinement.
+
+References: [DAP lifecycle](https://microsoft.github.io/debug-adapter-protocol/overview),
+[Ansibug attach](https://jborean93.github.io/ansibug/),
+[OpenTofu validation](https://opentofu.org/docs/cli/commands/validate/),
+[OpenTofu language server](https://github.com/opentofu/tofu-ls),
+[Ansible lint formats](https://docs.ansible.com/projects/lint/usage/).
+
+
+### Verification status (2026-09-10)
+
+54 frontend tests and 10 native unit tests pass, and the frontend production build
+passes. Live Terraform and OpenTofu validation returned the expected source-linked
+errors from provider-free fixtures; a localhost Ansible playbook passed syntax
+checking. TFLint, ansible-lint and Ansibug are not installed here, so their integrations
+have parser/preset coverage but no live tool run.
+
+LLDB answered initialize, but the opt-in target-launch test timed out waiting for
+initialized. Breakpoint/stack/variable/step execution is therefore **not verified**
+on this machine. macOS developer mode was disabled; enabling it required admin
+authentication, which did not complete. The OS reported cancellation, but no user
+action was observed. That setting was not changed.
+Browser automation is unavailable, so the new debugger and infrastructure UI still
+need interactive verification. Treat native debugging as a preview pending those
+checks; the unit suite is not a substitute for a passing debugger launch test.

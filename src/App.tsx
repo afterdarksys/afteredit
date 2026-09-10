@@ -1,8 +1,12 @@
+import InfrastructurePanel from './InfrastructurePanel';
+import { detectInfrastructure, type InfrastructureDiagnostic } from './infrastructure';
+import DebugPanel from './DebugPanel';
+import { useDebugger } from './useDebugger';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Files, Search, Code, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
+import { Cloud, Bug, Files, Search, Code, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
 import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
@@ -21,10 +25,11 @@ const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
 const CodeEditor = lazy(() => import('./CodeEditor'));
 type Entry = { name: string; path: string; directory: boolean };
 type Buffer = { value: string; saved: string; disk: boolean };
-type View = 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
+type View = 'infrastructure' | 'debug' | 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
 const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
+  const [infrastructureProblems,setInfrastructureProblems]=useState<InfrastructureDiagnostic[]>([]);
   const [compatibility,setCompatibility]=useState(false);
   const [extensionRevision,setExtensionRevision]=useState(0);
   const [servers,setServers]=useState<ConnectedServer[]>([]);
@@ -65,6 +70,7 @@ function App() {
   const activeBuffer = buffers[active];
   const value = activeBuffer?.value ?? scratch;
   const activeRoot = roots.filter(r => active.startsWith(r + '/') || active.startsWith(r + '\\')).sort((a,b) => b.length - a.length)[0] ?? (activeBuffer?.disk ? '' : root);
+  const debug = useDebugger(root,activeBuffer?.disk?active:'',(path,line)=>{setCompatibility(false);void openFile(path).then(()=>{setRevealLine(line);setView('debug');}).catch(report);});
   const scope = !activeRoot ? '' : activeBuffer?.disk && (active.startsWith(activeRoot + '/') || active.startsWith(activeRoot + '\\')) ? parent(active) : directory || activeRoot;
   const update = (next: string) => { if (activeBuffer) setBuffers(b => ({ ...b, [active]: { ...b[active], value: next } })); else setScratch(next); };
   const report = (e: unknown) => setStatus(String(e));
@@ -203,7 +209,7 @@ function App() {
   }
   async function configure() {
     try {
-      const content = JSON.stringify({ editor: defaults.editor, tasks: Object.fromEntries(Object.entries(presets[preset]).map(([id, task]) => [id, { ...task, cwd: scope.slice(activeRoot.length + 1) || '.' }])), rules: [], instructions: '' }, null, 2) + '\n';
+      const content = JSON.stringify({ editor: defaults.editor, tasks: Object.fromEntries(Object.entries(presets[preset]).map(([id, task]) => [id, { ...task, cwd: scope.slice(activeRoot.length + 1) || '.' }])), rules: [], languageServers:preset==='Terraform'?{hcl:{command:'terraform-ls',args:['serve'],documentLanguage:'terraform'}}:preset==='OpenTofu'?{hcl:{command:'tofu-ls',args:['serve'],documentLanguage:'opentofu'}}:preset==='Ansible'?{ansible:{command:'ansible-language-server',args:['--stdio'],documentLanguage:'ansible'}}:{}, instructions: '' }, null, 2) + '\n';
       const path = await invoke<string>('create_config', { directory: scope, content });
       await openFile(path); setRevision(n => n + 1); await browse(scope);
     } catch (e) { report(e); }
@@ -228,8 +234,8 @@ function App() {
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
     <div className="main-content">
       <nav className="activity-bar" aria-label="Workbench">{([
-        ['editor', Files, 'Files'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
-      ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => setView(id)}><Icon size={21} /></button>)}</nav>
+        ['editor', Files, 'Files'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
+      ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
       <aside className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
         <div className="sidebar-content"><button className="file-item" onClick={() => { setActive(''); setView('editor'); }}>Scratch</button>
@@ -241,7 +247,9 @@ function App() {
         <main className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor key={extensionRevision} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
+            {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor key={extensionRevision} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor infrastructureDiagnostics={infrastructureProblems} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
+            {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug}/>}
+            {<div style={{display:view==='infrastructure'?'flex':'none',flex:1,minWidth:0}}><InfrastructurePanel root={activeRoot} file={activeBuffer?.disk?active:''} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} detected={detectInfrastructure(entries.map(e=>e.name))} onDiagnostics={setInfrastructureProblems} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onConfigure={preset=>{setPreset(preset);setView('settings');}} onDebug={()=>{setCompatibility(false);setView('debug');}}/></div>}
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
             {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
             {view === 'languages' && <LanguagePanel root={activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
