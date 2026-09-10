@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 test('failed workbench import exposes an editable recovery scratch',async({page})=>{
- await page.route('**/src/App.tsx',route=>route.abort());
+ await page.route('**/src/App.tsx*',route=>route.abort());
  await page.goto('/');
  await expect(page.getByRole('heading',{name:'AfterEdit recovery'})).toBeVisible();
  await page.getByLabel('Recovery scratch buffer').fill('Keep this recovery note');
@@ -16,7 +16,7 @@ test('safe startup bypasses workbench modules without clearing preferences',asyn
  expect(await page.evaluate(()=>localStorage.getItem('editor.preferences.v1'))).toContain('fontSize');
 });
 test('failed editor import retains editable buffer and surrounding workbench',async({page})=>{
- await page.route('**/src/CodeEditor.tsx',route=>route.abort());
+ await page.route('**/src/CodeEditor.tsx*',route=>route.abort());
  await page.goto('/');
  await expect(page.getByRole('navigation',{name:'Workbench'})).toBeVisible();
  await page.getByLabel('Recovery text editor').fill('Still editable');

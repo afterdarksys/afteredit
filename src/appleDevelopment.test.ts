@@ -57,6 +57,6 @@ test('signing provisioning and export settings are explicit and escaped',()=>{
 });
 import {buildServerPlan} from './appleDevelopment.ts';
 test('Xcode build-server setup preserves workspace and scheme arguments',()=>{
- assert.deepEqual(buildServerPlan({...selection,project:'App Space.xcworkspace'}).tasks[0].args,['config','-workspace','App Space.xcworkspace','-scheme','My App']);
- assert.throws(()=>buildServerPlan({...selection,project:'Package.swift'}),/do not need/);
+ assert.deepEqual(buildServerPlan({...selection,project:'App Space.xcworkspace'},'/repo').tasks[0].args,['config','-workspace','/repo/App Space.xcworkspace','-scheme','My App','--build_root','/repo/.afteredit/apple/DerivedData']);
+ assert.throws(()=>buildServerPlan({...selection,project:'Package.swift'},'/repo'),/do not need/);
 });

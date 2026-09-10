@@ -58,6 +58,7 @@ pub struct Query {kind:String,#[serde(default)]project:String,#[serde(default)]s
 fn value(value:&str)->Result<(),String>{if value.len()>1000||value.starts_with('-')||value.contains(['\0','\n','\r']){Err("Invalid Apple tool argument.".into())}else{Ok(())}}
 fn query(root:&Path,q:Query)->Result<String,String>{
  for v in [&q.scheme,&q.target,&q.configuration,&q.destination]{value(v)?;}
+ if q.kind=="export-options"{let path=within(root,&q.path)?;if path.extension().and_then(|v|v.to_str())!=Some("plist"){return Err("Choose an export options plist.".into());}let text=run(root,"/usr/bin/plutil",&["-convert","json","-o","-",&path.to_string_lossy()])?;let options:Value=serde_json::from_str(&text).map_err(|e|e.to_string())?;if !options.is_object()||options.get("destination").is_some_and(|v|v!="export"){return Err("Only local export is supported. Set destination to export in the plist.".into());}return Ok(text);}
  if q.kind=="results"{let path=within(root,&q.path)?;if path.extension().and_then(|v|v.to_str())!=Some("xcresult"){return Err("Select an xcresult bundle.".into());}return run(root,"/usr/bin/xcrun",&["xcresulttool","get","test-results","summary","--path",&path.to_string_lossy(),"--compact"]);}
  if q.kind=="simulators"{return run(root,"/usr/bin/xcrun",&["simctl","list","devices","--json"]);}
  if q.kind=="devices"{
@@ -99,4 +100,24 @@ pub async fn apple_open(workspace:tauri::State<'_,crate::workspace::WorkspaceSta
  tauri::async_runtime::spawn_blocking(move||{
   run(&root,"/usr/bin/xcrun",&["xed","--project",&container.to_string_lossy(),"--line",&line.max(1).to_string(),&target.to_string_lossy()])?;Ok(())
  }).await.map_err(|e|e.to_string())?
+}
+
+#[cfg(all(test,target_os="macos"))]
+mod validation_tests {
+ use super::*;
+ #[test]fn export_options_reject_upload_and_symlink_escape(){
+  let root=std::env::temp_dir().join(format!("afteredit-export-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();let root=root.canonicalize().unwrap();
+  let file=root.join("Options.plist");
+  for (destination,ok) in [("export",true),("upload",false)] {
+   std::fs::write(&file,format!("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>destination</key><string>{destination}</string></dict></plist>")).unwrap();
+   let q:Query=serde_json::from_value(json!({"kind":"export-options","path":"Options.plist"})).unwrap();assert_eq!(query(&root,q).is_ok(),ok);
+  }
+  let link=root.join("outside");std::os::unix::fs::symlink("/usr/bin",&link).unwrap();assert!(within(&root,"outside/swift").is_err());std::fs::remove_dir_all(root).unwrap();
+ }
+ #[test]#[ignore="requires an installed Xcode; metadata loads project configuration"]
+ fn native_xcode_metadata(){
+  let root=Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/apple-xcode").canonicalize().unwrap();
+  let q:Query=serde_json::from_value(json!({"kind":"metadata","project":"Smoke.xcodeproj"})).unwrap();
+  let result:Value=serde_json::from_str(&query(&root,q).unwrap()).unwrap();assert!(result["project"]["schemes"].as_array().unwrap().contains(&json!("Smoke")));
+ }
 }

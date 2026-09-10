@@ -311,9 +311,13 @@ mod integration_tests {
     use super::*;
     #[test]
     #[ignore = "requires an installed clangd; run explicitly for native LSP smoke testing"]
-    fn clangd_stdio_roundtrip() {
-        let mut child = Command::new("clangd")
-            .args(["--log=error"])
+    fn clangd_stdio_roundtrip() { language_smoke(false); }
+    #[test]
+    #[ignore = "requires Xcode SourceKit-LSP and Swift package toolchain caches"]
+    fn sourcekit_swift_diagnostics() { language_smoke(true); }
+    fn language_smoke(swift:bool) {
+        let mut child = Command::new(if swift{"/usr/bin/xcrun"}else{"clangd"})
+            .args(if swift{vec!["sourcekit-lsp"]}else{vec!["--log=error"]})
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -331,15 +335,19 @@ mod integration_tests {
         read_server(session.clone(), output, move |message| {
             let _ = tx.send(message);
         });
-        let result=session.request("initialize".into(),json!({"processId":null,"rootUri":"file:///tmp/","capabilities":{"general":{"positionEncodings":["utf-16"]}}}));
+        struct Cleanup(Arc<Session>);impl Drop for Cleanup{fn drop(&mut self){self.0.stop();}}let _cleanup=Cleanup(session.clone());
+        let root=if swift{Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/apple").canonicalize().unwrap()}else{std::path::PathBuf::from("/tmp")};
+        let root_uri=reqwest::Url::from_directory_path(&root).unwrap().to_string();
+        let result=session.request("initialize".into(),json!({"processId":null,"rootUri":root_uri,"workspaceFolders":[{"uri":root_uri,"name":"Fixture"}],"capabilities":{"general":{"positionEncodings":["utf-16"]}}}));
         assert!(result.as_ref().unwrap()["capabilities"]["hoverProvider"]
             .as_bool()
             .unwrap());
         session
             .send(&json!({"jsonrpc":"2.0","method":"initialized","params":{}}))
             .unwrap();
-        session.send(&json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///tmp/afteredit-lsp-smoke.c","languageId":"c","version":1,"text":"int main() { return missing_symbol; }"}}})).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let uri=if swift{reqwest::Url::from_file_path(root.join("Sources/SampleCore/Answer.swift")).unwrap().to_string()}else{"file:///tmp/afteredit-lsp-smoke.c".into()};
+        session.send(&json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"languageId":if swift{"swift"}else{"c"},"version":1,"text":if swift{"public func answer() -> Int { missing_symbol }"}else{"int main() { return missing_symbol; }"}}}})).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut diagnostics = false;
         while std::time::Instant::now() < deadline {
             if let Ok(message) = rx.recv_timeout(Duration::from_millis(500)) {
@@ -358,7 +366,7 @@ mod integration_tests {
         session.stop();
         assert!(
             diagnostics,
-            "clangd should publish diagnostics for the unsaved source buffer"
+            "Language server should publish diagnostics for the unsaved source buffer"
         );
     }
 }

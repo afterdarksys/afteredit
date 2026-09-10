@@ -137,8 +137,8 @@ export function exportOptions(method:string,signing:AppleSigning,profiles:Record
  }
  return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>'+body+'</dict></plist>\n';
 }
-export function buildServerPlan(s:AppleSelection):{tasks:Task[]}{
+export function buildServerPlan(s:AppleSelection,root:string):{tasks:Task[]}{
  if(!s.scheme)throw new Error('Select an Xcode scheme for the build server.');
  const project=applePath(s.project);if(!/\.(xcodeproj|xcworkspace)$/.test(project))throw new Error('Swift packages do not need the Xcode build server.');
- return {tasks:[{command:'xcode-build-server',args:['config',project.endsWith('.xcworkspace')?'-workspace':'-project',project,'-scheme',argument(s.scheme,'scheme')]}]};
+ return {tasks:[{command:'xcode-build-server',args:['config','-workspace',root+'/'+project+(project.endsWith('.xcodeproj')?'/project.xcworkspace':''),'-scheme',argument(s.scheme,'scheme'),'--build_root',root+'/.afteredit/apple/DerivedData']}]};
 }

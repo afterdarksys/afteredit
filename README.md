@@ -479,3 +479,12 @@ both provider protocols and cancellation closing a connection. Run
 `npm run test:release` and `npm run test:infrastructure` for the added release
 checks. Native screen-reader verification remains open because this automation
 session lacks macOS Accessibility access. See [RELEASE-CHECKS.md](RELEASE-CHECKS.md).
+
+## Apple development
+
+The Apple development page supports Swift/SourceKit setup, Xcode project and
+scheme/target/destination selection, reviewed builds/tests with diagnostics and
+result bundles, simulator and connected-device commands, LLDB configuration,
+signing overrides, archive/export, and Xcode designer handoffs. SwiftUI Canvas
+and Interface Builder run in Xcode. See [Apple development](APPLE-DEVELOPMENT.md)
+for setup, verification commands and the remaining live-validation limits.

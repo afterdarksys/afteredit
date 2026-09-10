@@ -12,7 +12,9 @@
     "test:a11y": "playwright test",
     "test:extensions": "playwright test --config playwright.extensions.config.ts",
     "test:release": "playwright test --config playwright.release.config.ts",
-    "test:infrastructure": "node scripts/test-infrastructure.mjs"
+    "test:infrastructure": "node scripts/test-infrastructure.mjs",
+    "test:apple": "node --experimental-strip-types scripts/test-apple.mjs",
+    "test:apple:simulator": "node --experimental-strip-types scripts/test-apple-simulator.mjs"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "36.2.7",
