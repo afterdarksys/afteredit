@@ -283,3 +283,7 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 .editor-navigation button { margin:2px; }
 .editor-navigation ul { padding-left:22px; }
 .editor-navigation li button { white-space:normal; text-align:left; }
+.terminal-review-controls { display:flex; flex-wrap:wrap; gap:4px; padding:4px; }
+.terminal-transcript { max-height:60%; overflow:auto; padding:8px; }
+.terminal-transcript textarea { display:block; width:100%; box-sizing:border-box; white-space:pre; }
+.terminal-container { min-height:40px; min-width:0; }

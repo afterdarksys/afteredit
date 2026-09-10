@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useAccessibility } from './AccessibilityContext';
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Terminal as XTerm, type ITheme } from "xterm";
@@ -28,6 +29,21 @@ function decodeChunk(encoded: string): Uint8Array {
 }
 
 export default function TerminalPanel({ theme }: { theme: OsTheme }) {
+  const accessibility = useAccessibility();
+  const accessRef = useRef(accessibility); accessRef.current = accessibility;
+  const [transcript,setTranscript] = useState<string | null>(null);
+  const [terminalStatus,setTerminalStatus] = useState('');
+  const transcriptRef = useRef<HTMLTextAreaElement>(null);
+  function reviewOutput() {
+    const term=termRef.current;
+    if(!term) return;
+    const buffer=term.buffer.active;
+    const rows:string[]=[];
+    for(let i=Math.max(0,buffer.length-1000);i<buffer.length;i++) rows.push(buffer.getLine(i)?.translateToString(true)??'');
+    setTranscript(rows.join('\n').slice(-200000));
+    setTerminalStatus('Terminal snapshot refreshed. Up to 1,000 recent lines; output will stay still until refreshed.');
+    requestAnimationFrame(()=>transcriptRef.current?.focus());
+  }
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const themeRef = useRef(theme);
@@ -42,7 +58,8 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
     const term = new XTerm({
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       fontSize: 13,
-      cursorBlink: true,
+      cursorBlink: !accessRef.current.reducedMotion,
+      screenReaderMode: accessRef.current.screenReader === "on",
       scrollback: 10000,
       theme: THEMES[themeRef.current],
     });
@@ -88,9 +105,10 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
       try {
         const [onOutput, onExit] = await Promise.all([
           listen<string>("pty:output", (event) => term.write(decodeChunk(event.payload))),
-          listen<number>("pty:exit", (event) =>
-            term.writeln(`\r\n\x1b[90m[shell exited with code ${event.payload}]\x1b[0m`),
-          ),
+          listen<number>("pty:exit", (event) => {
+            setTerminalStatus(`Shell exited with code ${event.payload}`);
+            term.writeln(`\r\n\x1b[90m[shell exited with code ${event.payload}]\x1b[0m`);
+          }),
         ]);
         // The effect may have been cleaned up while these were in flight.
         if (disposed) {
@@ -106,6 +124,7 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
         }
       } catch (error) {
         if (!disposed) {
+          setTerminalStatus(`Could not start shell: ${String(error)}`);
           term.writeln(`\r\n\x1b[31m[could not start shell: ${String(error)}]\x1b[0m`);
         }
       }
@@ -153,10 +172,22 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
     if (!term) return;
     // Same async-render hazard as fit(): defer a frame so the renderer exists.
     const id = requestAnimationFrame(() => {
-      term.options.theme = THEMES[theme];
+      term.options.theme = accessibility.contrast === 'dark'
+        ? {background:'#000000',foreground:'#ffffff',cursor:'#ffffff'}
+        : accessibility.contrast === 'light' ? {background:'#ffffff',foreground:'#000000',cursor:'#000000'}
+        : THEMES[theme];
+      term.options.screenReaderMode = accessibility.screenReader === 'on';
+      term.options.cursorBlink = !accessibility.reducedMotion;
+      term.options.cursorStyle = accessibility.largeCursor ? 'block' : 'bar';
+      term.options.cursorWidth = accessibility.largeCursor ? 4 : 2;
     });
     return () => cancelAnimationFrame(id);
-  }, [theme]);
+  }, [theme, accessibility.contrast, accessibility.screenReader, accessibility.reducedMotion, accessibility.largeCursor]);
 
-  return <div className="terminal-container" ref={hostRef} />;
+  return <>
+    <div className="terminal-review-controls"><button onClick={()=>termRef.current?.focus()}>Focus shell input</button><button onClick={reviewOutput}>Review recent output</button></div>
+    <div className="terminal-container" ref={hostRef} />
+    {transcript!==null&&<div className="terminal-transcript"><label>Terminal output snapshot<textarea ref={transcriptRef} readOnly value={transcript} rows={6}/></label><button onClick={reviewOutput}>Refresh snapshot</button><button onClick={()=>{const node=transcriptRef.current;if(node){node.focus();node.setSelectionRange(node.value.length,node.value.length);node.scrollTop=node.scrollHeight;}}}>Go to end</button><button onClick={()=>{setTranscript(null);termRef.current?.focus();}}>Close snapshot and return to shell</button></div>}
+    <span role="status">{terminalStatus}</span>
+  </>;
 }
