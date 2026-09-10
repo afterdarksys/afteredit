@@ -77,3 +77,14 @@ export function appleProducts(text:string,root:string):AppleProduct[]{
  return rows.map(row=>{const s=row.buildSettings??{};const relative=(path:string)=>path.startsWith(root+'/')?path.slice(root.length+1):'';
  return {name:String(row.target??''),app:relative(String(s.TARGET_BUILD_DIR??'')+'/'+String(s.FULL_PRODUCT_NAME??'')),bundle:String(s.PRODUCT_BUNDLE_IDENTIFIER??''),executable:relative(String(s.TARGET_BUILD_DIR??'')+'/'+String(s.EXECUTABLE_PATH??'')),team:String(s.DEVELOPMENT_TEAM??''),signing:String(s.CODE_SIGN_STYLE??'')};});
 }
+export type AppleDevice={id:string;name:string;model:string;developerMode:string};
+export function appleDevices(text:string):AppleDevice[]{
+ const data=JSON.parse(text);if(data.info?.outcome==='failed'||data.error)throw new Error('Device discovery failed. See Xcode device tools.');
+ return (data.result?.devices??[]).filter((d:any)=>typeof d.identifier==='string').map((d:any)=>({id:d.identifier,name:String(d.deviceProperties?.name??d.identifier),model:String(d.hardwareProperties?.marketingName??d.hardwareProperties?.productType??''),developerMode:String(d.deviceProperties?.developerModeStatus??'unknown')}));
+}
+export function deviceAction(id:string,action:'install'|'launch'|'console',app:string,bundle:string):Task[]{
+ if(!/^[0-9a-f-]{36}$/i.test(id))throw new Error('Select a connected device identifier.');
+ if(action==='install'){if(!applePath(app).endsWith('.app'))throw new Error('Choose a signed device .app bundle.');return [{command:'/usr/bin/xcrun',args:['devicectl','device','install','app','--device',id,app],timeoutSeconds:300}];}
+ if(!/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(bundle))throw new Error('Supply the app bundle identifier.');
+ return [{command:'/usr/bin/xcrun',args:['devicectl','device','process','launch','--device',id,...(action==='console'?['--console']:[]),bundle],timeoutSeconds:action==='console'?3600:300}];
+}

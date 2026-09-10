@@ -60,6 +60,16 @@ fn query(root:&Path,q:Query)->Result<String,String>{
  for v in [&q.scheme,&q.target,&q.configuration,&q.destination]{value(v)?;}
  if q.kind=="results"{let path=within(root,&q.path)?;if path.extension().and_then(|v|v.to_str())!=Some("xcresult"){return Err("Select an xcresult bundle.".into());}return run(root,"/usr/bin/xcrun",&["xcresulttool","get","test-results","summary","--path",&path.to_string_lossy(),"--compact"]);}
  if q.kind=="simulators"{return run(root,"/usr/bin/xcrun",&["simctl","list","devices","--json"]);}
+ if q.kind=="devices"{
+  static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
+  let directory=std::env::temp_dir().join(format!("afteredit-devices-{}-{}",std::process::id(),NEXT.fetch_add(1,std::sync::atomic::Ordering::SeqCst)));
+  std::fs::create_dir(&directory).map_err(|e|e.to_string())?;
+  struct Cleanup(PathBuf);impl Drop for Cleanup{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
+  let _cleanup=Cleanup(directory.clone());let path=directory.join("devices.json");
+  run(root,"/usr/bin/xcrun",&["devicectl","list","devices","--timeout","30","--json-output",&path.to_string_lossy()])?;
+  if std::fs::metadata(&path).map_err(|e|e.to_string())?.len()>2_000_000{return Err("Device report exceeds 2 MB.".into());}
+  return std::fs::read_to_string(path).map_err(|e|e.to_string());
+ }
  let project=within(root,&q.project)?;
  if project.file_name().and_then(|v|v.to_str())==Some("Package.swift") {
   if q.kind!="metadata"{return Err("Swift packages use Swift build/test commands, not Xcode destinations.".into());}

@@ -4,7 +4,7 @@ import type {Task} from './workflows';
 import type {InfrastructureDiagnostic} from './infrastructure';
 import {useEffect,useRef,useState} from 'react';
 import {invoke,isTauri} from '@tauri-apps/api/core';
-import {appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
+import {appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
 type Tool={name:string;available:boolean;detail:string};
 export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;dirty:boolean;onOpen:(path:string,line:number)=>void;onProblems:(problems:InfrastructureDiagnostic[])=>void}){
  const [tools,setTools]=useState<Tool[]>([]),[projects,setProjects]=useState<string[]>([]),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
@@ -15,6 +15,9 @@ export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;d
  async function loadSimulators(){setBusy(true);try{setSimulators(appleSimulators(await invoke<string>('apple_query',{root,query:{kind:'simulators'}})));setStatus('Simulator list refreshed.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  async function loadProducts(){setBusy(true);try{setProducts(appleProducts(await invoke<string>('apple_query',{root,query:{kind:'settings',...selection}}),root));setStatus('Product settings loaded.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  function prepareSimulator(action:'boot'|'shutdown'|'install'|'launch'){try{setPlan({tasks:simulatorAction(simulator,action,appPath,bundle)});setStatus('Review simulator commands before running.');}catch(e){setStatus(String(e));}}
+ const [devices,setDevices]=useState<AppleDevice[]>([]),[device,setDevice]=useState('');
+ async function loadDevices(){setBusy(true);try{const found=appleDevices(await invoke<string>('apple_query',{root,query:{kind:'devices'}}));setDevices(found);if(!found.some(d=>d.id===device))setDevice('');setStatus(found.length?'Device list refreshed.':'No connected devices. Pair and enable Developer Mode using Xcode.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
+ function prepareDevice(action:'install'|'launch'|'console'){try{setPlan({tasks:deviceAction(device,action,appPath,bundle)});setStatus('Review device commands before running.');}catch(e){setStatus(String(e));}}
  const running=useRef(false),cancelled=useRef(false);
  useEffect(()=>()=>{cancelled.current=true;},[]);
  function prepare(action:'build'|'test'){try{setPlan(appleBuild(selection,action,Date.now().toString(36)));setStatus('Review the commands, then run.');}catch(e){setStatus(String(e));}}
@@ -41,6 +44,9 @@ export default function ApplePanel({root,dirty,onOpen,onProblems}:{root:string;d
  <h2>Simulators</h2><button disabled={busy||!root||!isTauri()} onClick={()=>void loadSimulators()}>Refresh simulators</button>
  <label>Simulator<select disabled={busy} value={simulator} onChange={e=>{setSimulator(e.target.value);setPlan(null);}}><option value="">Choose a simulator</option>{simulators.map(device=><option key={device.id} value={device.id} disabled={!device.available}>{device.name} · {device.runtime} · {device.state}{!device.available?' (unavailable)':''}</option>)}</select></label>
  {(['boot','shutdown','install','launch'] as const).map(action=><button key={action} disabled={busy||!trusted||!simulator} onClick={()=>prepareSimulator(action)}>Prepare simulator {action}</button>)}
+ <h2>Connected devices</h2><p>Device apps must be signed for the selected device. Pair the device and enable Developer Mode in Xcode first.</p><button disabled={busy||!root||!isTauri()} onClick={()=>void loadDevices()}>Refresh connected devices</button>
+ <label>Connected device<select disabled={busy} value={device} onChange={e=>{setDevice(e.target.value);setPlan(null);}}><option value="">Choose a connected device</option>{devices.map(d=><option key={d.id} value={d.id}>{d.name} · {d.model} · Developer Mode {d.developerMode}</option>)}</select></label>
+ {(['install','launch','console'] as const).map(action=><button key={action} disabled={busy||!trusted||!device} onClick={()=>prepareDevice(action)}>Prepare device {action}</button>)}
  <h2>Build and test</h2><p>Builds and tests can execute project scripts and package plugins. Save modified files first.</p>
  <button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('build')}>Prepare build</button><button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('test')}>Prepare tests</button>
  {dirty&&<p>Save modified project files before running Apple commands.</p>}

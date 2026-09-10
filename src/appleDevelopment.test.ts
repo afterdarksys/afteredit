@@ -33,3 +33,9 @@ test('simulator actions target an explicit device and app bundle',()=>{
  assert.equal(appleSimulators('{"devices":{"iOS":[{"udid":"id","isAvailable":false}]}}')[0].available,false);
  assert.equal(appleProducts('[{"target":"App","buildSettings":{"TARGET_BUILD_DIR":"/repo/out","FULL_PRODUCT_NAME":"App.app"}}]','/repo')[0].app,'out/App.app');
 });
+import {appleDevices,deviceAction} from './appleDevelopment.ts';
+test('physical devices use CoreDevice identifiers and explicit console launch',()=>{
+ assert.deepEqual(appleDevices('{"info":{"outcome":"success"},"result":{"devices":[]}}'),[]);
+ assert.throws(()=>deviceAction('My iPhone','launch','','com.example.App'),/identifier/);
+ const id='12345678-1234-1234-1234-123456789ABC';assert.ok(deviceAction(id,'console','','com.example.App')[0].args.includes('--console'));
+});
