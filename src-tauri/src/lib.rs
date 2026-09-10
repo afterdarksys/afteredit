@@ -1,4 +1,5 @@
 mod ai;
+mod dap;
 mod lsp;
 mod registry;
 mod lsp_installer;
@@ -16,6 +17,7 @@ pub fn run() {
         .manage(workspace::WorkspaceState::default())
         .manage(tasks::TaskState::default())
         .manage(ai::AiState::default())
+        .manage(dap::DapState::default())
         .manage(lsp::LspState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -37,6 +39,7 @@ pub fn run() {
             tasks::cancel_task,
             registry::registry_search, registry::registry_download,
             lsp::lsp_start,lsp::lsp_request,lsp::lsp_notify,lsp::lsp_stop,
+            dap::dap_start,dap::dap_request,dap::dap_stop,
             ai::ask_ai
         ])
         .build(tauri::generate_context!())
@@ -47,6 +50,7 @@ pub fn run() {
                 app.state::<PtyState>().shutdown();
                 app.state::<tasks::TaskState>().shutdown();
                 app.state::<lsp::LspState>().shutdown();
+                app.state::<dap::DapState>().shutdown();
             }
         });
 }
