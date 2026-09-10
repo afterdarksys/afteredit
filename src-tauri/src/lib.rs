@@ -5,6 +5,7 @@ mod ai_stream;
 mod dap;
 mod lsp;
 mod registry;
+mod editor_bridge;
 mod formatter;
 mod lsp_installer;
 mod pty;
@@ -22,8 +23,16 @@ use tauri::{Manager, RunEvent};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|app| { menu::install(app)?; Ok(()) })
+        .setup(|app| {
+            menu::install(app)?;
+            // A failed bridge is not fatal: the terminal just falls back to vi.
+            if let Err(e) = editor_bridge::start(&app.handle().clone()) {
+                eprintln!("editor bridge unavailable: {e}");
+            }
+            Ok(())
+        })
         .manage(PtyState::default())
+        .manage(editor_bridge::EditorBridge::default())
         .manage(workspace::WorkspaceState::default())
         .manage(tasks::TaskState::default())
         .manage(ai::AiState::default())
@@ -37,6 +46,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
+ editor_bridge::editor_release,
  formatter::format_source,formatter::list_formatters,formatter::formattable_languages,
             toolchain::inspect_tools,
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
@@ -64,6 +74,7 @@ pub fn run() {
             // Without this the shell outlives the window as an orphan.
             if let RunEvent::Exit = event {
                 app.state::<PtyState>().shutdown();
+                app.state::<editor_bridge::EditorBridge>().shutdown();
                 app.state::<tasks::TaskState>().shutdown();
                 app.state::<lsp::LspState>().shutdown();
                 app.state::<dap::DapState>().shutdown();
@@ -85,10 +96,11 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 14] = [
+        let modules: [(&str, &str); 15] = [
             ("ai.rs", include_str!("ai.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
+            ("editor_bridge.rs", include_str!("editor_bridge.rs")),
             ("formatter.rs", include_str!("formatter.rs")),
             ("git.rs", include_str!("git.rs")),
             ("lsp.rs", include_str!("lsp.rs")),

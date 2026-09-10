@@ -310,3 +310,17 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 .startup-recovery textarea { display:block; box-sizing:border-box; width:100%; min-height:45vh; font:16px monospace; color:#eee; background:#161616; }
 .startup-recovery pre { white-space:pre-wrap; overflow-wrap:anywhere; }
 .recovery a { color:#8bc9ff; }
+
+/* $EDITOR bridge: a terminal command is blocked on this tab */
+.bridge-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; font-size: 13px;
+  background: rgba(220,220,170,0.12); border-bottom: 1px solid rgba(220,220,170,0.45);
+  color: #dcdcaa;
+}
+.bridge-banner-text { flex: 1; min-width: 220px; }
+.bridge-banner button { padding: 5px 11px; border-radius: 4px; font-size: 12px; cursor: pointer; border: 1px solid transparent; }
+.bridge-accept { background: #0e639c; border-color: #1177bb; color: #fff; }
+.bridge-accept:hover { background: #1177bb; }
+.bridge-abort { background: transparent; border-color: #6a6a6a; color: #ccc; }
+.bridge-abort:hover { border-color: #f48771; color: #f48771; }

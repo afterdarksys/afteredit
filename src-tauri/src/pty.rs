@@ -11,7 +11,7 @@ use std::thread;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Emitted for every chunk read off the pty, base64 encoded.
 const EVENT_OUTPUT: &str = "pty:output";
@@ -76,6 +76,11 @@ pub fn spawn_pty(app: AppHandle, state: State<'_, PtyState>, rows: u16, cols: u1
     let mut cmd = CommandBuilder::new_default_prog();
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // $EDITOR and friends, so `git commit` and `kubectl edit` open a tab here
+    // instead of vi inside this pane.
+    for (key, value) in app.state::<crate::editor_bridge::EditorBridge>().environment() {
+        cmd.env(key, value);
+    }
     if let Some(home) = std::env::var_os("HOME") {
         cmd.cwd(home);
     }

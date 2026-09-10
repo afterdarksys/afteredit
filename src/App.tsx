@@ -33,6 +33,7 @@ import PreferencesPanel from './PreferencesPanel';
 import { editorDefaults, validateEditor, savedText } from './preferences';
 import { formatText } from './externalFormatting';
 import { languageForFilename } from './languages';
+import EditorBridgeBanner, { type PendingEdit } from './EditorBridgeBanner';
 import { usePersistedState } from './usePersistedState';
 import { defaults, matchingRules, expandTask, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
 const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
@@ -69,6 +70,7 @@ function App() {
   const buffersRef=useRef(buffers);buffersRef.current=buffers;
   const [active, setActive] = useState('');
   const [diskChange,setDiskChange]=useState<{path:string;text?:string;error?:string}|null>(null);
+  const [pendingEdit,setPendingEdit]=useState<PendingEdit|null>(null);
   const [reviewDisk,setReviewDisk]=useState(false);
   const [sessionReady,setSessionReady] = useState(!isTauri());
   const [roots, setRoots] = useState<string[]>([]);
@@ -237,6 +239,30 @@ function App() {
       else await openFile(path);
     } catch (e) { report(e); }
   }
+  // A terminal command ($EDITOR) blocked on a file we opened for it.
+  const bridge = useRef({ open: (_p: string) => Promise.resolve(), save: () => Promise.resolve(), report: (_e: unknown) => {} });
+  useEffect(() => {
+    let stop: (() => void) | undefined, dead = false;
+    void listen<PendingEdit>('editor:request', async event => {
+      try { await bridge.current.open(event.payload.path); setPendingEdit(event.payload); }
+      catch (e) { bridge.current.report(e); void invoke('editor_release', { id: event.payload.id, code: 1 }).catch(()=>{}); }
+    }).then(off => { if (dead) off(); else stop = off; });
+    return () => { dead = true; stop?.(); };
+  }, []);
+
+  async function finishBridgedEdit(code: number) {
+    const request = pendingEdit;
+    if (!request) return;
+    try {
+      // Save before releasing: git re-reads the file the instant we exit, and
+      // an unmodified COMMIT_EDITMSG makes it abort.
+      if (code === 0) await bridge.current.save();
+      await invoke('editor_release', { id: request.id, code });
+      setStatus(code === 0 ? `Released ${basename(request.path)} to the terminal` : 'Terminal command aborted');
+    } catch (e) { report(e); }
+    finally { setPendingEdit(null); }
+  }
+
   async function save() {
     if (!activeBuffer?.disk) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
     let formatted = activeBuffer.value;
@@ -327,6 +353,7 @@ function App() {
     }
     setRevision(n=>n+1);setStatus('All open files saved');
   }
+  bridge.current = { open: openFile, save, report };
   const editorCommandIds=editorCommands.map(c=>c.id);
   const enabledMenu=menuCommands.filter(({id})=>{
     if(!sessionReady)return false;
@@ -424,6 +451,12 @@ function App() {
       </aside>
       <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
         <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer?.disk} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+          {pendingEdit&&<EditorBridgeBanner
+            pending={pendingEdit}
+            dirty={!!buffers[pendingEdit.path]&&buffers[pendingEdit.path].value!==buffers[pendingEdit.path].saved}
+            onFinish={()=>void finishBridgedEdit(0)}
+            onAbort={()=>void finishBridgedEdit(1)}
+          />}
           {diskChange?.path===active&&<section className="disk-change" aria-label="External file change">
             <p role="status">{diskChange.error ? 'File unavailable on disk: '+diskChange.error : 'This file changed on disk. Your unsaved edits are preserved.'}</p>
             {diskChange.text!==undefined&&<><button onClick={()=>setReviewDisk(v=>!v)}>Review disk version</button>
