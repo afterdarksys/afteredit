@@ -1,3 +1,4 @@
+import { cycleRegion, focusRegion } from './focus';
 import AccessibilityPanel from './AccessibilityPanel';
 import { restoreAccessibility } from './accessibility';
 import InfrastructurePanel from './InfrastructurePanel';
@@ -219,36 +220,42 @@ function App() {
     } catch (e) { report(e); }
   }
   const commands = [
+    ...(['workbench-navigation','explorer','workspace','terminal'] as const).map(id=>({title:'Focus '+id,action:()=>focusRegion(id)})),
+    {title:'Accessibility settings',action:()=>setView('settings')},
+    {title:'Project search',action:()=>setView('search')},
+    {title:'Run and debug',action:()=>setView('debug')},
     { title: 'Open file', action: () => void choose(false) }, { title: 'Add project folder', action: () => void choose(true) },
     { title: 'Save file', action: () => void save() }, { title: 'Save as new file', action: () => void saveAs() }, { title: 'Build workflows', action: () => setView('tasks') },
     { title: 'Project settings', action: () => setView('settings') }, { title: 'Developer tools', action: () => setView('tools') }, { title: 'AI assistant', action: () => setView('ai') },
   ];
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.key === 'F6' && !palette) { e.preventDefault(); cycleRegion(e.shiftKey); return; }
       if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(p => !p); }
       if (e.key === 'Escape') setPalette(false);
     };
-    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keydown', handler, true); return () => window.removeEventListener('keydown', handler, true);
   });
   return <div className="app-container" data-contrast={accessibility.contrast} data-reduced-motion={accessibility.reducedMotion} style={{zoom:accessibility.zoom/100,width:`${10000/accessibility.zoom}vw`,height:`${10000/accessibility.zoom}vh`}}>
+    <a className="skip-link" href="#workspace" onClick={e=>{e.preventDefault();focusRegion('workspace');}}>Skip to workspace</a>
     <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => setPalette(true)}>Commands ⌘⇧P</button></header>
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
     <div className="main-content">
-      <nav className="activity-bar" aria-label="Workbench">{([
+      <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
         ['editor', Files, 'Files'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
-      <aside className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
+      <aside id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
         <div className="sidebar-content"><button className="file-item" onClick={() => { setActive(''); setView('editor'); }}>Scratch</button>
           {directory && <div className="folder-location"><span title={directory}>{basename(directory)}</span><button aria-label="Refresh folder" onClick={() => void browse(directory).catch(report)}>↻</button>{directory !== root && <button onClick={() => void browse(parent(directory)).catch(report)}>Up</button>}</div>}
-          {entries.map(entry => <button className={`file-item ${active === entry.path ? 'active' : ''}`} key={entry.path} title={entry.path} onClick={() => void (entry.directory ? (setActive(''), browse(entry.path)) : openFile(entry.path)).catch(report)}>{entry.directory ? '▸' : '·'} {entry.name}</button>)}
+          {entries.map(entry => <button className={`file-item ${active === entry.path ? 'active' : ''}`} key={entry.path} aria-label={`${entry.directory ? "Folder" : "File"}: ${entry.name}`} aria-current={active===entry.path ? "true" : undefined} title={entry.path} onClick={() => void (entry.directory ? (setActive(''), browse(entry.path)) : openFile(entry.path)).catch(report)}>{entry.directory ? '▸' : '·'} {entry.name}</button>)}
         </div>
       </aside>
       <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
-        <main className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+        <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
             {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor key={extensionRevision} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor infrastructureDiagnostics={infrastructureProblems} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
@@ -275,7 +282,7 @@ function App() {
             </section>}
           </div>
         </main>
-        <section className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
+        <section id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
     </div>
     <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>

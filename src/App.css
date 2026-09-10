@@ -273,3 +273,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .center-area.layout-side-by-side .terminal-panel { height:180px; flex:0 0 180px; }
   .workbench-page { padding:12px; }
 }
+.skip-link { position:absolute; left:8px; top:-100px; z-index:3000; padding:10px; background:#fff; color:#000; }
+.skip-link:focus { top:8px; }
