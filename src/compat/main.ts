@@ -1,3 +1,4 @@
+import {createModelReference} from '@codingame/monaco-vscode-api/monaco';
 import {URI} from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri';
 import {normalizeExtensionSettings} from '../extensionSettings';
 import '@codingame/monaco-vscode-api/vscode/vs/editor/contrib/suggest/browser/suggestController';
@@ -30,6 +31,8 @@ const send=(data:object)=>parent.postMessage({source:'afteredit-compat',...data}
 let editor:monaco.editor.IStandaloneCodeEditor|undefined;
 let path='',applying=false;
 let revision=0;
+let modelReference:Awaited<ReturnType<typeof createModelReference>>|undefined;
+let documentQueue=Promise.resolve();
 const report=(e:unknown)=>{status.textContent=String(e);send({type:'error',message:String(e)});};
 window.addEventListener('error',e=>report(e.message));
 window.addEventListener('unhandledrejection',e=>report(e.reason));
@@ -40,20 +43,23 @@ async function start(data:any){
  for(const extension of (data.extensions as Extension[]).filter(e=>e.enabled&&e.web)){
   const registered=registerExtension(extension.web!.manifest as IExtensionManifest,ExtensionHostKind.LocalWebWorker);
   for(const [file,base64] of Object.entries(extension.web!.files)){
-   const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
-   const url=URL.createObjectURL(new Blob([bytes],{type:file.endsWith('.js')?'text/javascript':'application/octet-stream'}));
+   // The extension worker iframe permits data: fetches, but not blob: fetches.
+   const url='data:'+(file.endsWith('.js')?'text/javascript':'application/octet-stream')+';base64,'+base64;
    registered.registerFileUrl(file,url);
   }
   await registered.whenReady();
  }
  editor=monaco.editor.create(document.getElementById('editor')!,{automaticLayout:true,theme:'vs-dark'});
- setDocument(data);
+ await setDocument(data);
  editor.onDidChangeModelContent(()=>{if(!applying)send({type:'change',path,value:editor!.getValue(),revision});});
  editor.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,()=>send({type:'save',path}));
  status.textContent='Experimental · web extensions · current buffer only';
  send({type:'ready'});
 }
 function setDocument(data:any){
+ documentQueue=documentQueue.then(()=>applyDocument(data)).catch(report);return documentQueue;
+}
+async function applyDocument(data:any){
  if(!editor)return;
  applying=true;
  try{
@@ -63,8 +69,12 @@ function setDocument(data:any){
   if(!model)model=monaco.editor.createModel(data.value,data.language,uri);
   else if(model.getValue()!==data.value)model.setValue(data.value);
   const previous=editor.getModel();
-  editor.setModel(model);
-  if(previous&&previous!==model)previous.dispose();
+  if(previous!==model){
+   const nextReference=await createModelReference(model.uri);
+   editor.setModel(model);
+   if(modelReference)modelReference.dispose();else previous?.dispose();
+   modelReference=nextReference;
+  }
   if(data.options)editor.updateOptions(data.options);
   if(data.theme)monaco.editor.setTheme(data.theme);
  }finally{applying=false;}

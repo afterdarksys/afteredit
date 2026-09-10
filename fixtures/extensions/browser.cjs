@@ -1,6 +1,17 @@
 // A real VS Code browser-extension fixture. No AfterEdit API is used here.
 const vscode = require('vscode');
 exports.activate = function(context) {
+ context.subscriptions.push(vscode.commands.registerCommand('afteredit.fixture.configuration', async () => {
+  await vscode.workspace.getConfiguration('afteredit.fixture').update('message','persisted by extension',vscode.ConfigurationTarget.Global);
+  return vscode.workspace.getConfiguration('afteredit.fixture').get('message');
+ }));
+ context.subscriptions.push(vscode.commands.registerCommand('afteredit.fixture.workspace', () => vscode.workspace.workspaceFolders?.[0]?.name || 'Empty workspace'));
+ context.subscriptions.push(vscode.commands.registerCommand('afteredit.fixture.keybinding', async () => {
+  const editor=vscode.window.activeTextEditor;
+  if(!editor)throw new Error('No active editor');
+  await editor.edit(builder=>builder.insert(new vscode.Position(0,0),'KEYBINDING WORKS\n'));
+  return 'Keybinding command applied';
+ }));
  context.subscriptions.push(vscode.commands.registerCommand('afteredit.fixture.activation', () => 'VS Code extension activated successfully'));
  context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider('plaintext', {
   provideDocumentFormattingEdits(document) {

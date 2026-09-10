@@ -2,6 +2,8 @@ export function focusRegion(id: string) {
   const region = document.getElementById(id);
   if (!region) return;
   if (id === 'workspace') {
+    window.dispatchEvent(new Event('afteredit:focus-editor'));
+    if(region.querySelector('.monaco-editor')?.contains(document.activeElement))return;
     const editor = region.querySelector<HTMLElement>('.monaco-editor textarea, .fallback-editor, iframe');
     if (editor) { editor.focus(); return; }
   }

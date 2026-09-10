@@ -65,7 +65,6 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(host);
     termRef.current = term;
 
     let disposed = false;
@@ -135,6 +134,7 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
     let attempts = 0;
     const startWhenLaidOut = () => {
       if (disposed) return;
+      if (!term.element) { term.open(host); frame=requestAnimationFrame(startWhenLaidOut); return; }
       if (!refit() && attempts < MAX_LAYOUT_FRAMES) {
         attempts += 1;
         frame = requestAnimationFrame(startWhenLaidOut);

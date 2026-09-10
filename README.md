@@ -33,13 +33,27 @@ Symlink entries are hidden; backend access resolves paths against selected roots
 
 Saves use a temporary sibling file and rename, preserve permissions, and reject
 externally changed content. Native close prompts when files have unsaved edits.
-Disk buffers are session-only; the scratch buffer and UI preferences persist.
-Reopen a disk file after restarting. Use Reload from disk to explicitly discard a buffer and read external changes;
-there is no live filesystem watcher yet.
+Projects, open file paths and the active tab are restored from a native session
+file on restart. Saved paths are reauthorized by the backend; missing paths and
+retargeted symlinks are skipped. File contents are reread from disk: unsaved disk
+buffer edits are not persisted. Restoration is bounded to 100 files, 20 projects
+and 16 MiB of text. Scratch and personal preferences persist separately.
+
+The active disk file is checked every three seconds and when the app regains focus.
+Clean buffers reload external changes. Dirty buffers retain your edits and show
+the current disk version for review. Choose Reload to discard your edits, Keep my
+edits to accept the reviewed disk version as the save baseline, or Save as to make
+a separate file. Saves still reject later external changes. This is active-file
+polling, not a recursive filesystem watcher.
 
 The application shell loads separately from Monaco. Import/render failures show
 an error and recovery editor instead of clearing the workbench; preferences are
 validated on load. Flex sizing provides an editor height in both terminal layouts.
+A failed workbench import or a 20-second startup timeout opens a plain-text
+recovery editor. Add `?safe=1` to the app URL to bypass the workbench, extensions,
+and session restoration while preserving preferences. Recovery edits the local
+scratch buffer. Browser regression tests deliberately block workbench/editor
+imports and verify recovery remains usable.
 These changes address identified startup failure paths. The reported white screen
 still needs visual confirmation on the affected installation.
 
@@ -99,7 +113,11 @@ keys stay in memory and are never written to preferences or project files.
 Remote endpoints require HTTPS; local HTTP is supported. Redirects are disabled.
 OpenAI-compatible endpoints can use `max_tokens` or `max_completion_tokens` and
 return `choices[0].message.content`. Anthropic uses its Messages protocol and text
-content blocks. Requests are non-streaming.
+content blocks. Chat can stream OpenAI-compatible or Anthropic SSE responses; JSON responses
+remain supported. Stop response cancels the native in-flight request and keeps
+partial output. Stream errors or missing completion markers are reported explicitly.
+Agent actions are parsed only after a complete response; Stop run also cancels its
+current provider request. Usage reservations remain charged after cancellation.
 
 The active file is included only when explicitly selected. Effective project
 instructions are displayed and included. Requests have a 120-second timeout,
@@ -145,22 +163,23 @@ large installs can exceed its quota and will fail with an explicit message.
 | --- | --- |
 | Themes and snippets | Existing regular editor integration |
 | Browser entry, commands, configuration, language registration, keybindings | Experimental VS Code runtime |
-| Formatters/completion providers registered through the web API | Runtime included; activation and edits still require interactive verification |
+| Formatters/completion providers registered through the web API | Formatter registration and edits tested with the browser fixture; other providers need extension-specific verification |
 | Desktop Node entry only, dependencies, proposed APIs | Rejected |
 | Debuggers, TextMate grammar packages, webviews and other contribution types | Rejected |
 
 The compatibility editor shares the active buffer with AfterEdit; Save and Cmd/Ctrl+S
 use existing native conflict checks. It exposes no native project filesystem or task
-bridge, and only the current document model. Standard keybindings and basic editor
+bridge, and only the current document model. It supplies the selected project as workspace
+identity, without granting native filesystem access. Extension settings can be
+edited as JSON/JSONC under Extensions, and changes made through the VS Code global
+configuration API persist across restarts. Standard keybindings and basic editor
 preferences apply there; Vim/Emacs, native LSP connections and existing themes remain
-in the regular editor. Extension configuration is currently runtime-local. Full
-workspace APIs, extension settings persistence and extension keybinding fidelity
-are not yet verified. Use the standard editor to return without discarding the buffer.
+in the regular editor. Full workspace filesystem APIs remain outside this prototype. Use the standard editor to return without discarding the buffer.
 
 Browser extensions execute code: enable only trusted packages. A web worker is not
 a general security sandbox. The native CSP permits `unsafe-eval` because VS Code's
-worker loads CommonJS extension bundles with `new Function`; blob reads are also
-permitted for registered package resources. Native IPC APIs are not supplied to the
+worker loads CommonJS extension bundles with `new Function`; data/blob reads are permitted for registered package resources. Extension files
+use data URLs compatible with the worker iframe policy. Native IPC APIs are not supplied to the
 extension API. Remote network availability depends on the host's CSP.
 
 Microsoft Marketplace is not configured: Microsoft's published FAQ excludes
@@ -176,18 +195,15 @@ buffer in the experimental editor, and run **Test extension activation**. The
 expected result is “VS Code extension activated successfully”. Run **Test formatter:
 uppercase buffer** to verify provider registration, model access and buffer edits,
 then save and return to the standard editor. The `desktop.vsix` and `debugger.vsix`
-fixtures must be rejected. Browser automation is unavailable in the implementation
-session, so these interactive checks are **not yet verified**. Unit tests cover
+fixtures must be rejected. Run the real-extension browser checks with `npm run test:extensions`. Unit tests cover
 package validation and persistence; successful bundling is not an activation test.
 
 Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy and
 Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
 Other languages can connect installed LSP servers through Language Services.
 Diagnostics, completion, hover, definition and document formatting are supported
-when advertised by the server. Refactoring/code actions are not yet supported. The native Run and debug panel provides DAP debugging independently of executable extension support. Git/search/debug sidebar
-placeholders and the simulated AI status have been removed. Monaco's in-file
-find remains available. Integrated Git, remote development,
-and desktop extension hosting are future work.
+when advertised by the server. Refactoring/code actions are not yet supported. The native Run and debug panel provides DAP debugging independently of executable extension support. Monaco's in-file find remains available. Remote development and desktop extension
+hosting are future work.
 
 The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
 it as `$EDITOR` yet.
@@ -250,7 +266,8 @@ UTF-16 positions. The client sends open/change/save/close notifications, handles
 full or incremental synchronization, and exposes advertised diagnostics, completion,
 hover, definitions and formatting through Monaco. Arbitrary server workspace edits
 and executable completion commands are not applied. Dynamic registration, semantic
-tokens, rename/code actions and DAP debugging remain unsupported. Disconnected
+tokens and rename/code actions remain unsupported by the LSP client. Native DAP
+debugging is provided separately by Run and debug. Disconnected
 servers can be removed and reconnected in the Language Services panel.
 
 Settings detects build manifests in the current explorer directory, including mixed
@@ -381,8 +398,8 @@ References: [DAP lifecycle](https://microsoft.github.io/debug-adapter-protocol/o
 
 ### Verification status (2026-09-10)
 
-54 frontend tests and 10 native unit tests pass, and the frontend production build
-passes. Live Terraform and OpenTofu validation returned the expected source-linked
+Before the workbench batch, 54 frontend tests and 10 native unit tests passed,
+and the frontend production build passed. Live Terraform and OpenTofu validation returned the expected source-linked
 errors from provider-free fixtures; a localhost Ansible playbook passed syntax
 checking. TFLint, ansible-lint and Ansibug are not installed here, so their integrations
 have parser/preset coverage but no live tool run.
@@ -392,8 +409,7 @@ initialized. Breakpoint/stack/variable/step execution is therefore **not verifie
 on this machine. macOS developer mode was disabled; enabling it required admin
 authentication, which did not complete. The OS reported cancellation, but no user
 action was observed. That setting was not changed.
-Browser automation is unavailable, so the new debugger and infrastructure UI still
-need interactive verification. Treat native debugging as a preview pending those
+The packaged debugger and infrastructure UI still need hands-on verification. Treat native debugging as a preview pending those
 checks; the unit suite is not a substitute for a passing debugger launch test.
 
 ## Accessibility
@@ -406,3 +422,53 @@ the terminal offers static output review; AI edits have sequential text review.
 
 See [the accessibility guide](ACCESSIBILITY.md) for controls, limitations,
 automated checks and the native screen-reader validation checklist.
+
+## Source control
+
+Select a repository's top-level folder and open Source control. Refresh shows the
+branch and individual staged/working-tree states, including untracked files and
+renames. Review working or staged diffs; untracked contents can be opened in the
+editor. Diff helpers and external text conversions are disabled. Output is bounded
+to 2 MB and Git commands time out after 30 seconds.
+
+Stage/unstage operates on one listed file (including the source of a rename).
+Save open buffers before staging. Enter a commit message, review all staged changes,
+then Commit reviewed changes. The backend checks the reviewed tree and commits
+a separate index snapshot, preserving concurrent staging and working-tree edits.
+Normal Git hooks still run. Conflicts, identity/signing problems and hook failures
+are shown in the panel. Push, pull, merge, history and branch switching are not
+included in this batch.
+
+## Infrastructure tool checks
+
+Check installed tools shows executable paths and version results for Terraform,
+OpenTofu, TFLint, Ansible, ansible-lint and Ansibug. Each action checks its required
+tools before running; missing or unusable tools are reported without installing
+software. Version checks run outside the project and have five-second timeouts.
+Ansibug is checked in the python3 environment selected by the application's PATH.
+
+The infrastructure smoke script exercises installed tools and explicitly reports
+optional missing tools as skipped. A successful module check alone does not verify
+a complete Ansibug debug session.
+
+## Workbench batch verification
+
+The automated checks include native temporary-repository Git operations, session
+permission restoration, external-file conflict reconciliation, split SSE decoding,
+and cancellation. Browser tests cover startup recovery, file conflicts, Git review
+gating and partial-response cancellation with a mock native backend. The production
+extension suite imports a real VSIX and exercises activation, formatting,
+keybindings, configuration persistence and workspace identity.
+
+Run `npm test`, `cargo test --manifest-path src-tauri/Cargo.toml --lib`,
+`npm run test:a11y`, and `npm run test:extensions`. The extension suite builds
+production assets before testing to avoid development-server dependency reloads.
+The existing opt-in LLDB and clangd tests remain separate. Native desktop UI,
+VoiceOver/NVDA and paid provider endpoints still require hands-on verification;
+the original affected-installation white-screen report is not independently
+confirmed resolved.
+
+Batch results: **58 frontend unit tests, 19 native tests, 11 workbench browser tests
+and 3 production extension tests passed**. The production build passed. Two existing
+native integration tests were skipped by default. Live Terraform/OpenTofu validation
+and Ansible syntax checks passed; TFLint, ansible-lint and Ansibug were unavailable.

@@ -1,0 +1,55 @@
+import {test,expect} from '@playwright/test';
+import {nativeHarness} from './nativeHarness';
+test('restored file detects external edits and preserves dirty buffers until a decision',async({page})=>{
+ await nativeHarness(page);await page.goto('/');
+ await expect(page.locator('.view-lines')).toContainText('original text',{timeout:30000});
+ await page.evaluate(()=>{(window as any).testDisk['/project/note.txt']='external text';window.dispatchEvent(new Event('focus'));});
+ await expect(page.locator('.view-lines')).toContainText('external text');
+ await page.locator('.view-lines').click();await page.keyboard.press('ControlOrMeta+a');await page.keyboard.insertText('my edits');
+ await expect(page.getByRole('button',{name:'/project/note.txt, unsaved changes',exact:true})).toBeVisible();
+ await page.evaluate(()=>{(window as any).testDisk['/project/note.txt']='new disk edit';window.dispatchEvent(new Event('focus'));});
+ await expect(page.getByText('This file changed on disk. Your unsaved edits are preserved.')).toBeVisible();
+ await expect(page.locator('.view-lines')).toContainText('my edits');
+ await page.getByRole('button',{name:'Review disk version'}).click();
+ await expect(page.getByLabel('Current disk version')).toHaveValue('new disk edit');
+ await page.getByRole('button',{name:'Keep my edits against this disk version'}).click();
+ await page.getByRole('button',{name:'Save',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).testDisk['/project/note.txt'])).toBe('my edits');
+ const sessions=await page.evaluate(()=>(window as any).testCalls.filter((c:any)=>c.command==='save_session'));
+ expect(sessions.length).toBeGreaterThan(0);expect(sessions.every((c:any)=>c.args.session.files.includes('/project/note.txt'))).toBe(true);
+});
+test('chat appends streamed chunks and cancellation retains partial output',async({page})=>{
+ await nativeHarness(page);await page.goto('/');
+ await page.getByRole('button',{name:'AI assistant',exact:true}).click();
+ await page.getByLabel('Model ID').fill('fixture-model');
+ await page.getByLabel('Request',{exact:true}).fill('Explain this');
+ await page.getByRole('button',{name:'Send request',exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).testCalls.some((c:any)=>c.command==='ask_ai'))).toBe(true);
+ const id=await page.evaluate(()=>(window as any).testCalls.findLast((c:any)=>c.command==='ask_ai').args.request.requestId);
+ await page.evaluate(id=>{(window as any).testEmit('ai:chunk',{requestId:id,text:'Partial response'});},id);
+ await expect(page.getByLabel('AI response')).toHaveText('Partial response');
+ await page.getByRole('button',{name:'Stop response'}).click();
+ await expect(page.getByRole('button',{name:'Send request',exact:true})).toBeEnabled();
+ await page.evaluate(id=>{(window as any).testEmit('ai:chunk',{requestId:id,text:' ignored late chunk'});},id);
+ await expect(page.getByLabel('AI response')).toHaveText('Partial response');
+ expect(await page.evaluate(()=>(window as any).testCalls.some((c:any)=>c.command==='cancel_ai'))).toBe(true);
+});
+
+test('Git staging and commit require a current staged review',async({page})=>{
+ await nativeHarness(page);await page.goto('/');
+ await page.getByRole('button',{name:'Source control',exact:true}).click();
+ await page.getByRole('button',{name:'Stage file',exact:true}).click();
+ await expect(page.getByText('Index: modified · Working tree: unchanged')).toBeVisible();
+ await page.getByLabel('Commit message').fill('Reviewed change');
+ const commit=page.getByRole('button',{name:'Commit reviewed changes'});
+ await expect(commit).toBeDisabled();
+ await page.getByRole('button',{name:'Review all staged changes'}).click();
+ await expect(commit).toBeEnabled();
+ await page.getByRole('button',{name:'Refresh Git'}).click();
+ await expect(commit).toBeDisabled();
+ await page.getByRole('button',{name:'Review all staged changes'}).click();
+ await commit.click();
+ await expect(page.getByText('Committed fixture',{exact:true})).toBeVisible();
+ const call=await page.evaluate(()=>(window as any).testCalls.find((c:any)=>c.command==='git_commit'));
+ expect(call.args).toEqual({root:'/project',message:'Reviewed change',tree:'reviewed-tree'});
+});

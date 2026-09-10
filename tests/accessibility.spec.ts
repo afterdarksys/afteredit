@@ -7,11 +7,11 @@ test('keyboard regions, modal focus containment and restoration',async({page})=>
   await page.keyboard.press('F6');
   await expect(page.locator('#explorer')).toBeFocused();
   await page.keyboard.press('F6');
-  await expect(page.locator('.monaco-editor textarea')).toBeFocused();
+  await expect(page.getByRole('textbox',{name:/Code editor:/})).toBeFocused();
   await page.keyboard.press('F6');
   await expect(page.locator('#terminal')).toBeFocused();
   await page.keyboard.press('Shift+F6');
-  await expect(page.locator('.monaco-editor textarea')).toBeFocused();
+  await expect(page.getByRole('textbox',{name:/Code editor:/})).toBeFocused();
   const opener=page.getByRole('button',{name:'Commands ⌘⇧P'});
   await opener.click();
   const dialog=page.getByRole('dialog',{name:'Commands'});
@@ -67,9 +67,9 @@ test('screen reader editor mode permits Tab to leave and reports position',async
   await expect(page.locator('.editor-navigation [role=status]')).toContainText('Line 1, column 1. Indentation: 0 spaces, 0 tabs.');
   await page.keyboard.press('F6');
   await page.keyboard.press('Shift+F6');
-  await expect(page.locator('.monaco-editor textarea')).toBeFocused();
+  await expect(page.getByRole('textbox',{name:/Code editor:/})).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.locator('.monaco-editor textarea')).not.toBeFocused();
+  await expect(page.getByRole('textbox',{name:/Code editor:/})).not.toBeFocused();
 });
 test('terminal snapshot remains readable after shell startup failure',async({page})=>{
   await page.goto('/tests/fixtures/accessibility.html?fixture=terminal');

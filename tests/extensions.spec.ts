@@ -1,0 +1,57 @@
+import {nativeHarness} from './nativeHarness';
+import {test,expect} from '@playwright/test';
+import {execFileSync} from 'node:child_process';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+let fixtures:string;
+test.afterEach(async({page},info)=>{if(info.status!==info.expectedStatus)console.log('Editor status:',await page.locator('.keymap-status').allTextContents());});
+test.beforeAll(()=>{fixtures=mkdtempSync(join(tmpdir(),'afteredit-extension-browser-'));execFileSync(process.execPath,['scripts/build-extension-fixtures.mjs',fixtures]);});
+test('real VSIX activates, formats, handles a keybinding and persists configuration',async({page})=>{
+ test.setTimeout(180000);
+ page.on('console',message=>{if(message.type()==='error')console.log('Extension browser:',message.text().slice(0,1500));});
+ page.on('pageerror',error=>console.log('Extension page error:',error.message));
+ await page.goto('/');
+ await page.getByRole('button',{name:'Extensions',exact:true}).click();
+ await page.getByLabel('Import .vsix').setInputFiles(join(fixtures,'web.vsix'));
+ await expect(page.getByRole('button',{name:'Enable and trust code'})).toBeVisible();
+ await page.getByRole('button',{name:'Enable and trust code'}).click();
+ await page.getByLabel('Extension settings JSON').fill('{"afteredit.fixture.message":"from settings"}');
+ await page.getByRole('button',{name:'Save extension settings'}).click();
+ await page.getByRole('button',{name:'Open experimental VS Code editor'}).click();
+ const commands=page.getByLabel('Run extension command');
+ await expect(commands).toBeEnabled({timeout:120000});
+ await commands.selectOption('afteredit.fixture.activation');
+ await expect(page.getByText('VS Code extension activated successfully',{exact:true})).toBeVisible({timeout:30000});
+ await commands.selectOption('afteredit.fixture.format');
+ await expect(page.getByText('Formatter provider applied uppercase text',{exact:true})).toBeVisible({timeout:30000});
+ const frame=page.frameLocator('iframe[title="VS Code extension editor"]');
+ await frame.getByRole('textbox',{name:/Code editor:/}).focus();
+ await page.keyboard.press('Control+Alt+y');
+ await expect(frame.locator('.view-lines')).toContainText('KEYBINDING WORKS',{timeout:15000});
+ await commands.selectOption('afteredit.fixture.configuration');
+ await expect(page.getByText('persisted by extension',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Extensions',exact:true}).click();
+ await expect(page.getByLabel('Extension settings JSON')).toContainText('persisted by extension');
+ await page.reload();
+ await page.getByRole('button',{name:'Extensions',exact:true}).click();
+ await expect(page.getByLabel('Extension settings JSON')).toContainText('persisted by extension');
+});
+test('unsupported desktop extension is rejected without enabling code',async({page})=>{
+ await page.goto('/');await page.getByRole('button',{name:'Extensions',exact:true}).click();
+ await page.getByLabel('Import .vsix').setInputFiles(join(fixtures,'desktop.vsix'));
+ await expect(page.getByText(/Desktop-only extension/)).toBeVisible();
+ await expect(page.getByRole('button',{name:'Enable and trust code'})).toHaveCount(0);
+});
+
+test('extension sees the selected workspace identity',async({page})=>{
+ await nativeHarness(page);await page.goto('/');
+ await page.getByRole('button',{name:'Extensions',exact:true}).click();
+ await page.getByLabel('Import .vsix').setInputFiles(join(fixtures,'web.vsix'));
+ await page.getByRole('button',{name:'Enable and trust code'}).click();
+ await page.getByRole('button',{name:'Open experimental VS Code editor'}).click();
+ const commands=page.getByLabel('Run extension command');
+ await expect(commands).toBeEnabled({timeout:120000});
+ await commands.selectOption('afteredit.fixture.workspace');
+ await expect(page.locator('.keymap-status[role="status"]')).toHaveText('project');
+});

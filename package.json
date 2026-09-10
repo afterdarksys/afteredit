@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "node --experimental-strip-types --test src/tools/*.test.ts src/*.test.ts",
-    "test:a11y": "playwright test"
+    "test:a11y": "playwright test",
+    "test:extensions": "playwright test --config playwright.extensions.config.ts"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "36.2.7",
