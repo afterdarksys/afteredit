@@ -8,6 +8,7 @@ mod registry;
 mod editor_bridge;
 mod formatter;
 mod lsp_installer;
+mod policy;
 mod pty;
 mod toolpath;
 mod tasks;
@@ -47,6 +48,7 @@ pub fn run() {
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
  editor_bridge::editor_release,
+ policy::policy_discover,policy::policy_evaluate,
  formatter::format_source,formatter::list_formatters,formatter::formattable_languages,
             toolchain::inspect_tools,
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
@@ -96,7 +98,7 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 15] = [
+        let modules: [(&str, &str); 16] = [
             ("ai.rs", include_str!("ai.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
@@ -106,6 +108,7 @@ mod registration_tests {
             ("lsp.rs", include_str!("lsp.rs")),
             ("lsp_installer.rs", include_str!("lsp_installer.rs")),
             ("menu.rs", include_str!("menu.rs")),
+            ("policy.rs", include_str!("policy.rs")),
             ("pty.rs", include_str!("pty.rs")),
             ("registry.rs", include_str!("registry.rs")),
             ("session.rs", include_str!("session.rs")),

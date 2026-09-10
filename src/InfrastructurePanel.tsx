@@ -1,4 +1,5 @@
 import OutputLog from './OutputLog';
+import PolicySection from './PolicySection';
 import {listen} from '@tauri-apps/api/event';
 import {useEffect,useRef,useState} from 'react';
 import {invoke,isTauri} from '@tauri-apps/api/core';
@@ -33,6 +34,7 @@ export default function InfrastructurePanel({root,file,dirty,detected,onDiagnost
  <button disabled={!isTauri()||checking||busy} onClick={()=>{setChecking(true);void invoke<typeof tools>('inspect_tools',{names:['terraform','tofu','tflint','ansible-playbook','ansible-lint','ansibug']}).then(setTools).catch(e=>setStatus(String(e))).finally(()=>setChecking(false));}}>{checking?'Checking tools…':'Check installed tools'}</button>
  <ul>{tools.map(tool=><li key={tool.name}><strong>{tool.name}: {tool.available?'available':'unavailable'}</strong>{tool.path&&<p>{tool.path}</p>}<pre>{tool.version}</pre></li>)}</ul>
  <h2>Debugging</h2>{kind==='Ansible'?<><p>For task breakpoints and variable inspection, install Ansibug in the Python environment containing Ansible. Run debug-listen here, then choose the Ansible attach preset in Run and debug. This attaches to localhost:4712. Use a dedicated Python executable in a project workflow when needed.</p><button onClick={onDebug}>Open Run and debug</button></>:<p>Use trace-plan for engine/provider logs, or show-plan for an existing plan.out. Terraform/OpenTofu configuration is declarative and does not expose source stepping through DAP. To step through provider source, configure the Go debugger separately. Trace output and plan JSON can contain sensitive values.</p>}
+ <PolicySection root={root} onDiagnostics={onDiagnostics} onOpen={onOpen}/>
  <p role="status">{status}</p><h2>Problems</h2>{problems.map((p,i)=><button className="search-hit" key={i} onClick={()=>onOpen(p.path,p.line)}>{p.severity} · {p.path}:{p.line}:{p.column}<code>{p.message}</code></button>)}<OutputLog label="Infrastructure command output">{output||'Command output appears here.'}</OutputLog>
  </section>;
 }
