@@ -34,6 +34,7 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
   const [transcript,setTranscript] = useState<string | null>(null);
   const [terminalStatus,setTerminalStatus] = useState('');
   const transcriptRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(()=>{if(transcript!==null)transcriptRef.current?.focus();},[transcript]);
   function reviewOutput() {
     const term=termRef.current;
     if(!term) return;
@@ -48,6 +49,20 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
   const termRef = useRef<XTerm | null>(null);
   const themeRef = useRef(theme);
   themeRef.current = theme;
+
+  const reviewRef=useRef(reviewOutput);reviewRef.current=reviewOutput;
+  useEffect(()=>{
+    const handle=(event:Event)=>{
+      const command=(event as CustomEvent<string>).detail,term=termRef.current;
+      if(!term)return;
+      if(command==='review')reviewRef.current();
+      else if(command==='clear'){term.clear();setTerminalStatus('Terminal scrollback cleared.');term.focus();}
+      else if(command==='interrupt'){void invoke('pty_write',{data:'\u0003'}).catch(e=>setTerminalStatus(String(e)));term.focus();}
+      else if(command==='focus')term.focus();
+    };
+    window.addEventListener('afteredit:terminal-command',handle);
+    return()=>window.removeEventListener('afteredit:terminal-command',handle);
+  },[]);
 
   // Built exactly once. Theme and layout changes must not tear this down:
   // recreating the terminal would drop scrollback and re-run the PTY handshake.

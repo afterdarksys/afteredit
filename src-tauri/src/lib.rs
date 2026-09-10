@@ -1,3 +1,4 @@
+mod menu;
 mod apple;
 mod ai;
 mod ai_stream;
@@ -19,6 +20,7 @@ use tauri::{Manager, RunEvent};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| { menu::install(app)?; Ok(()) })
         .manage(PtyState::default())
         .manage(workspace::WorkspaceState::default())
         .manage(tasks::TaskState::default())
@@ -28,6 +30,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            menu::update_menu,
             pty::spawn_pty,
             pty::pty_write,
             pty::pty_resize,

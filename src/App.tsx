@@ -1,3 +1,4 @@
+import { menuCommands, editorCommands, type EditorMenuRequest } from './menuCommands';
 import ApplePanel from './ApplePanel';
 import {normalizeExtensionSettings,restoredExtensionSettings} from './extensionSettings';
 import GitPanel from './GitPanel';
@@ -72,6 +73,13 @@ function App() {
   const [root, setRoot] = useState('');
   const [directory, setDirectory] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [sidebarVisible,setSidebarVisible]=useState(true),[terminalVisible,setTerminalVisible]=useState(true);
+  const [editorMenu,setEditorMenu]=useState<EditorMenuRequest>();
+  const [terminalMenu,setTerminalMenu]=useState<EditorMenuRequest>();
+  useEffect(()=>{if(terminalMenu)window.dispatchEvent(new CustomEvent('afteredit:terminal-command',{detail:terminalMenu.id}));},[terminalMenu]);
+  const [editorReady,setEditorReady]=useState(false);
+  const menuSequence=useRef(0),fileSequence=useRef(0);
+  const [openEditorsOnly,setOpenEditorsOnly]=useState(false);
   const [view, setView] = useState<View>('editor');
   const [status, setStatus] = useState('Ready');
   const [config, setConfig] = useState<ProjectConfig>(defaults);
@@ -116,7 +124,7 @@ function App() {
     return()=>{disposed=true;};
   },[]);
   useEffect(()=>{
-    if(!isTauri() || !active || !sessionReady)return;
+    if(!isTauri() || !activeBuffer?.disk || !sessionReady)return;
     let disposed=false,checking=false;
     setDiskChange(null);setReviewDisk(false);
     const check=async()=>{
@@ -145,7 +153,7 @@ function App() {
     window.addEventListener('focus',check);
     return()=>{disposed=true;clearInterval(timer);window.removeEventListener('focus',check);};
   },[active,sessionReady]);
-  const sessionFiles=JSON.stringify(Object.keys(buffers));
+  const sessionFiles=JSON.stringify(Object.keys(buffers).filter(path=>buffers[path].disk));
   useEffect(()=>{
     if(!sessionReady || !isTauri())return;
     const timer=setTimeout(()=>{void invoke('save_session',{session:{roots,files:JSON.parse(sessionFiles),active,root,directory}}).catch(report);},300);
@@ -191,8 +199,9 @@ function App() {
     return () => { disposed = true; off?.(); };
   }, []);
   async function reloadFile() {
-    if (!activeBuffer) return;
+    if (!activeBuffer?.disk) return;
     try {
+      if(activeBuffer.value!==activeBuffer.saved && !await invoke<boolean>('confirm_discard'))return;
       const path = active;
       const text = await invoke<string>('read_file', { path });
       setBuffers(b => ({ ...b, [path]: { value: text, saved: text, disk: true } }));
@@ -200,15 +209,15 @@ function App() {
       if (basename(path) === '.afteredit.json') setRevision(n => n + 1);
     } catch (e) { report(e); }
   }
-  async function saveAs() {
+  async function saveAs(snapshot = value, source = active) {
     try {
-      const snapshot = value;
       const path = await invoke<string | null>('save_as', { content: snapshot });
-      if (!path) return;
-      setBuffers(b => ({ ...b, [path]: { value: snapshot, saved: snapshot, disk: true } }));
+      if (!path) return false;
+      setBuffers(b => {const next={...b,[path]:{value:snapshot,saved:snapshot,disk:true}};if(source!==path&&b[source]&&!b[source].disk)delete next[source];return next;});
       setActive(path); setView('editor'); setStatus(`Created ${basename(path)}`);
       if (directory) await browse(directory);
-    } catch (e) { report(e); }
+      return true;
+    } catch (e) { report(e); return false; }
   }
   async function browse(path: string) { const result = await invoke<Entry[]>('list_directory', { path }); setEntries(result); setDirectory(path); }
   async function openFile(path: string) {
@@ -227,12 +236,12 @@ function App() {
     } catch (e) { report(e); }
   }
   async function save() {
-    if (!activeBuffer) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
+    if (!activeBuffer?.disk) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
     const snapshot = savedText(activeBuffer.value, config.editor), path = active;
     if (snapshot !== activeBuffer.value) update(snapshot);
     try {
       await invoke('save_file', { path, content: snapshot, expected: activeBuffer.saved });
-      setBuffers(b => ({ ...b, [path]: { ...b[path], saved: snapshot } }));
+      setBuffers(b => b[path]?({ ...b, [path]: { ...b[path], saved: snapshot } }):b);
       setStatus(`Saved ${basename(path)}`);
       window.dispatchEvent(new CustomEvent("afteredit:saved",{detail:{path,text:snapshot}}));
       if (basename(path) === '.afteredit.json') { setRevision(n => n + 1); return; }
@@ -293,38 +302,112 @@ function App() {
       await openFile(path); setRevision(n => n + 1); await browse(scope);
     } catch (e) { report(e); }
   }
-  const commands = [
-    ...(['workbench-navigation','explorer','workspace','terminal'] as const).map(id=>({title:'Focus '+id,action:()=>focusRegion(id)})),
+  async function closeEditors(paths:string[]) {
+    if(paths.some(path=>buffersRef.current[path]?.value!==buffersRef.current[path]?.saved) && !await invoke<boolean>('confirm_discard'))return;
+    setBuffers(current=>Object.fromEntries(Object.entries(current).filter(([path])=>!paths.includes(path))));
+    if(paths.includes(active))setActive('');
+    setStatus('Editors closed');
+  }
+  async function saveAll() {
+    for(const [path,buffer] of Object.entries(buffersRef.current)) {
+      if(!buffer.disk){if(!await saveAs(buffer.value,path))return;continue;}
+      if(buffer.value===buffer.saved)continue;
+      const text=buffer.value;
+      await invoke('save_file',{path,content:text,expected:buffer.saved});
+      setBuffers(current=>current[path]?({...current,[path]:{...current[path],value:current[path].value===buffer.value?text:current[path].value,saved:text}}):current);
+      window.dispatchEvent(new CustomEvent('afteredit:saved',{detail:{path,text}}));
+    }
+    setRevision(n=>n+1);setStatus('All open files saved');
+  }
+  const editorCommandIds=editorCommands.map(c=>c.id);
+  const enabledMenu=menuCommands.filter(({id})=>{
+    if(!sessionReady)return false;
+    if(editorCommandIds.includes(id))return editorReady&&(view==='editor'||view==='debug');
+    if(id==='file.revert')return !!activeBuffer?.disk;
+    if(id==='file.close')return !!activeBuffer;
+    if(id==='file.close-all'||id==='file.save-all')return Object.keys(buffers).length>0;
+    if(id==='file.close-folder')return !!root;
+    if(id==='terminal.stop-task')return isTauri();
+    if(id.startsWith('terminal.')&&id!=='terminal.workflows')return isTauri();
+    return !id.startsWith('file.')||isTauri();
+  }).map(c=>c.id);
+  const enabledMenuJSON=JSON.stringify([...enabledMenu,...(sessionReady?['view.preferences']:[])]);
+  useEffect(()=>{if(isTauri())void invoke('update_menu',{enabled:JSON.parse(enabledMenuJSON)}).catch(report);},[enabledMenuJSON]);
+  async function dispatchMenu(id:string) {
+    if(!sessionReady||(!enabledMenu.includes(id)&&id!=='view.preferences'))return;
+    if(editorCommandIds.includes(id)){
+      if(!editorReady)return;
+      setEditorMenu({id,sequence:++menuSequence.current});return;
+    }
+    if(id==='file.new'){
+      const path='inmemory://untitled-'+Date.now()+'-'+(++fileSequence.current)+'.txt';
+      setBuffers(b=>({...b,[path]:{value:'',saved:'',disk:false}}));setActive(path);setView('editor');return;
+    }
+    if(id==='file.open')return choose(false);
+    if(id==='file.folder')return choose(true);
+    if(id==='file.save')return save();
+    if(id==='file.save-as')return saveAs();
+    if(id==='file.save-all')return saveAll();
+    if(id==='file.revert')return reloadFile();
+    if(id==='file.close')return closeEditors([active]);
+    if(id==='file.close-all')return closeEditors(Object.keys(buffersRef.current));
+    if(id==='file.close-folder'){
+      const paths=Object.keys(buffersRef.current).filter(path=>path.startsWith(root+'/'));
+      if(paths.some(path=>buffersRef.current[path].value!==buffersRef.current[path].saved)&&!await invoke<boolean>('confirm_discard'))return;
+      setBuffers(current=>Object.fromEntries(Object.entries(current).filter(([path])=>!paths.includes(path))));
+      setRoots(current=>current.filter(path=>path!==root));setRoot('');setDirectory('');setEntries([]);setActive('');return;
+    }
+    if(id==='view.commands'||id==='view.open-editors'){setOpenEditorsOnly(id==='view.open-editors');setPalette(true);return;}
+    if(id==='view.sidebar'){setSidebarVisible(v=>!v);return;}
+    if(id==='view.terminal'){setTerminalVisible(v=>!v);return;}
+    if(id==='view.layout'){setLayout(layout==='stacked'?'side-by-side':'stacked');return;}
+    if(id.startsWith('view.zoom-')){const zoom=id==='view.zoom-reset'?100:Math.max(100,Math.min(200,accessibility.zoom+(id==='view.zoom-in'?25:-25)));setAccessibilityJSON(JSON.stringify({...accessibility,zoom}));return;}
+    if(id==='go.next'||id==='go.previous'){
+      const paths=['',...Object.keys(buffers)],index=paths.indexOf(active),offset=id==='go.next'?1:-1;
+      setActive(paths[(index+offset+paths.length)%paths.length]);setView('editor');return;
+    }
+    if(id==='terminal.workflows') {setView('tasks');return;}
+    if(id==='terminal.stop-task'){cancelled.current=true;await invoke('cancel_task');return;}
+    if(id.startsWith('terminal.')){
+      setTerminalVisible(true);setTerminalMenu({id:id.slice(9),sequence:++menuSequence.current});return;
+    }
+    if(id==='view.preferences'){setView('settings');return;}
+    if(id.startsWith('view.')){const target=id.slice(5) as View;if(target==='debug')setCompatibility(false);setView(target);}
+  }
+  const menuHandler=useRef(dispatchMenu);menuHandler.current=dispatchMenu;
+  useEffect(()=>{
+    if(!isTauri())return;
+    let disposed=false,off=()=>{};
+    void listen<string>('menu:command',e=>{void menuHandler.current(e.payload).catch(report);}).then(unlisten=>{if(disposed)unlisten();else off=unlisten;}).catch(report);
+    return()=>{disposed=true;off();};
+  },[]);
+  const commands = openEditorsOnly ? [{title:'Scratch',action:()=>{setActive('');setView('editor');}},...Object.keys(buffers).map(path=>({title:path,action:()=>{setActive(path);setView('editor');}}))] : [
+    ...(['workbench-navigation','explorer','workspace','terminal'] as const).map(id=>({title:'Focus '+id,action:()=>{if(id==='explorer')setSidebarVisible(true);if(id==='terminal')setTerminalVisible(true);requestAnimationFrame(()=>focusRegion(id));}})),
     {title:'Accessibility settings',action:()=>setView('settings')},
-    {title:'Project search',action:()=>setView('search')},
-    {title:'Run and debug',action:()=>setView('debug')},
-    { title: 'Source control', action:()=>setView('git') },
-    { title: 'Open file', action: () => void choose(false) }, { title: 'Add project folder', action: () => void choose(true) },
-    { title: 'Save file', action: () => void save() }, { title: 'Save as new file', action: () => void saveAs() }, { title: 'Build workflows', action: () => setView('tasks') },
-    { title: 'Project settings', action: () => setView('settings') }, { title: 'Developer tools', action: () => setView('tools') }, { title: 'AI assistant', action: () => setView('ai') },
+    ...menuCommands.filter(c=>enabledMenu.includes(c.id)&&!c.id.startsWith('window.')&&c.id!=='view.commands').map(c=>({title:c.title,action:()=>{void dispatchMenu(c.id).catch(report);}})),
   ];
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'F6' && !palette) { e.preventDefault(); cycleRegion(e.shiftKey); return; }
       if (palette) return;
       if (e.defaultPrevented) return;
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(p => !p); }
+      if (!isTauri() && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
+      if (!isTauri() && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
+      if (!isTauri() && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setOpenEditorsOnly(false); setPalette(p => !p); }
       if (e.key === 'Escape') setPalette(false);
     };
     window.addEventListener('keydown', handler, true); return () => window.removeEventListener('keydown', handler, true);
   });
   return <AccessibilityContext.Provider value={effectiveAccessibility}><div className="app-container" data-contrast={accessibility.contrast} data-reduced-motion={accessibility.reducedMotion} style={{zoom:accessibility.zoom/100,width:`${10000/accessibility.zoom}vw`,height:`${10000/accessibility.zoom}vh`}}>
     <a className="skip-link" href="#workspace" onClick={e=>{e.preventDefault();focusRegion('workspace');}}>Skip to workspace</a>
-    <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => setPalette(true)}>Commands ⌘⇧P</button></header>
+    <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => {setOpenEditorsOnly(false);setPalette(true);}}>Commands ⌘⇧P</button></header>
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
     {!sessionReady && <div role="status" className="session-loading">Restoring previous session…</div>}
     <div className="main-content" inert={!sessionReady}>
       <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
         ['editor', Files, 'Files'], ['apple', Code, 'Apple development'], ['git', Code, 'Source control'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
-      <aside id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
+      <aside style={{display:sidebarVisible?undefined:'none'}} id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
         <div className="sidebar-content"><button className="file-item" onClick={() => { setActive(''); setView('editor'); }}>Scratch</button>
           {directory && <div className="folder-location"><span title={directory}>{basename(directory)}</span><button aria-label="Refresh folder" onClick={() => void browse(directory).catch(report)}>↻</button>{directory !== root && <button onClick={() => void browse(parent(directory)).catch(report)}>Up</button>}</div>}
@@ -332,7 +415,7 @@ function App() {
         </div>
       </aside>
       <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
-        <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+        <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer?.disk} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
           {diskChange?.path===active&&<section className="disk-change" aria-label="External file change">
             <p role="status">{diskChange.error ? 'File unavailable on disk: '+diskChange.error : 'This file changed on disk. Your unsaved edits are preserved.'}</p>
             {diskChange.text!==undefined&&<><button onClick={()=>setReviewDisk(v=>!v)}>Review disk version</button>
@@ -343,7 +426,7 @@ function App() {
           </section>}
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor infrastructureDiagnostics={[...infrastructureProblems,...appleProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
+            {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
             {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug}/>}
             {<div style={{display:view==='infrastructure'?'flex':'none',flex:1,minWidth:0}}><InfrastructurePanel root={activeRoot} file={activeBuffer?.disk?active:''} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} detected={detectInfrastructure(entries.map(e=>e.name))} onDiagnostics={setInfrastructureProblems} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onConfigure={preset=>{setPreset(preset);setView('settings');}} onDebug={()=>{setCompatibility(false);setView('debug');}}/></div>}
             <div style={{display:view==='apple'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><ApplePanel key={activeRoot} root={activeRoot} active={active} onLanguage={project=>{setLanguageIntent({root:project.endsWith('Package.swift')?activeRoot+(project.includes('/')?'/'+project.slice(0,project.lastIndexOf('/')):'' ):activeRoot,language:'swift'});setView('languages');}} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} onProblems={setAppleProblems} onDebug={config=>{localStorage.setItem('debug.config:'+activeRoot,JSON.stringify(config));setRoot(activeRoot);setCompatibility(false);setView('debug');}} onOpen={(path,line)=>{void openFile(path).then(()=>{setRevealLine(line);setView('editor');}).catch(report);}}/></div>
@@ -369,7 +452,7 @@ function App() {
             </section>}
           </div>
         </main>
-        <section id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
+        <section style={{display:terminalVisible?undefined:'none'}} id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
     </div>
     <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>

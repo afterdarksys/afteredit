@@ -1,0 +1,393 @@
+[
+  {
+    "title": "File",
+    "items": [
+      {
+        "id": "file.new",
+        "title": "New File",
+        "accelerator": "CmdOrCtrl+N"
+      },
+      {
+        "id": "file.open",
+        "title": "Open File\u2026",
+        "accelerator": "CmdOrCtrl+O"
+      },
+      {
+        "id": "file.folder",
+        "title": "Add Project Folder\u2026",
+        "accelerator": "CmdOrCtrl+Alt+O"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "file.save",
+        "title": "Save",
+        "accelerator": "CmdOrCtrl+S"
+      },
+      {
+        "id": "file.save-as",
+        "title": "Save As\u2026",
+        "accelerator": "CmdOrCtrl+Shift+S"
+      },
+      {
+        "id": "file.save-all",
+        "title": "Save All",
+        "accelerator": "CmdOrCtrl+Alt+S"
+      },
+      {
+        "id": "file.revert",
+        "title": "Revert File\u2026"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "file.close",
+        "title": "Close Editor",
+        "accelerator": "CmdOrCtrl+W"
+      },
+      {
+        "id": "file.close-all",
+        "title": "Close All Editors\u2026"
+      },
+      {
+        "id": "file.close-folder",
+        "title": "Close Project Folder\u2026"
+      }
+    ]
+  },
+  {
+    "title": "Edit",
+    "items": [
+      {
+        "native": "undo"
+      },
+      {
+        "native": "redo"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "native": "cut"
+      },
+      {
+        "native": "copy"
+      },
+      {
+        "native": "paste"
+      },
+      {
+        "native": "select_all"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "editor.action.startFindReplaceAction",
+        "title": "Replace\u2026",
+        "accelerator": "CmdOrCtrl+Alt+F"
+      },
+      {
+        "id": "actions.find",
+        "title": "Find\u2026",
+        "accelerator": "CmdOrCtrl+F"
+      },
+      {
+        "id": "view.search",
+        "title": "Find in Project\u2026",
+        "accelerator": "CmdOrCtrl+Shift+F"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "editor.action.commentLine",
+        "title": "Toggle Line Comment",
+        "accelerator": "CmdOrCtrl+/"
+      },
+      {
+        "id": "editor.action.blockComment",
+        "title": "Toggle Block Comment",
+        "accelerator": "Alt+Shift+A"
+      },
+      {
+        "id": "editor.action.formatDocument",
+        "title": "Format Document",
+        "accelerator": "Alt+Shift+F"
+      },
+      {
+        "id": "editor.action.rename",
+        "title": "Rename Symbol",
+        "accelerator": "F2"
+      }
+    ]
+  },
+  {
+    "title": "Selection",
+    "items": [
+      {
+        "id": "expandLineSelection",
+        "title": "Select Line",
+        "accelerator": "CmdOrCtrl+L"
+      },
+      {
+        "id": "editor.action.smartSelect.expand",
+        "title": "Expand Selection",
+        "accelerator": "Ctrl+Shift+ArrowRight"
+      },
+      {
+        "id": "editor.action.smartSelect.shrink",
+        "title": "Shrink Selection",
+        "accelerator": "Ctrl+Shift+ArrowLeft"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "editor.action.addSelectionToNextFindMatch",
+        "title": "Add Next Occurrence",
+        "accelerator": "CmdOrCtrl+D"
+      },
+      {
+        "id": "editor.action.selectHighlights",
+        "title": "Select All Occurrences",
+        "accelerator": "CmdOrCtrl+Shift+L"
+      },
+      {
+        "id": "editor.action.insertCursorAbove",
+        "title": "Add Cursor Above",
+        "accelerator": "CmdOrCtrl+Alt+ArrowUp"
+      },
+      {
+        "id": "editor.action.insertCursorBelow",
+        "title": "Add Cursor Below",
+        "accelerator": "CmdOrCtrl+Alt+ArrowDown"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "editor.action.copyLinesUpAction",
+        "title": "Copy Line Up",
+        "accelerator": "Alt+Shift+ArrowUp"
+      },
+      {
+        "id": "editor.action.copyLinesDownAction",
+        "title": "Copy Line Down",
+        "accelerator": "Alt+Shift+ArrowDown"
+      },
+      {
+        "id": "editor.action.moveLinesUpAction",
+        "title": "Move Line Up",
+        "accelerator": "Alt+ArrowUp"
+      },
+      {
+        "id": "editor.action.moveLinesDownAction",
+        "title": "Move Line Down",
+        "accelerator": "Alt+ArrowDown"
+      }
+    ]
+  },
+  {
+    "title": "View",
+    "items": [
+      {
+        "id": "view.commands",
+        "title": "Command Palette\u2026",
+        "accelerator": "CmdOrCtrl+Shift+P"
+      },
+      {
+        "id": "view.editor",
+        "title": "Editor"
+      },
+      {
+        "id": "view.sidebar",
+        "title": "Toggle File Explorer",
+        "accelerator": "CmdOrCtrl+B"
+      },
+      {
+        "id": "view.terminal",
+        "title": "Toggle Terminal",
+        "accelerator": "Ctrl+Backquote"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "view.apple",
+        "title": "Apple Development"
+      },
+      {
+        "id": "view.git",
+        "title": "Source Control"
+      },
+      {
+        "id": "view.debug",
+        "title": "Run and Debug"
+      },
+      {
+        "id": "view.tasks",
+        "title": "Build Workflows"
+      },
+      {
+        "id": "view.languages",
+        "title": "Language Services"
+      },
+      {
+        "id": "view.infrastructure",
+        "title": "Infrastructure"
+      },
+      {
+        "id": "view.tools",
+        "title": "Developer Tools"
+      },
+      {
+        "id": "view.ai",
+        "title": "AI Assistant"
+      },
+      {
+        "id": "view.extensions",
+        "title": "Extensions"
+      },
+      {
+        "id": "view.settings",
+        "title": "Settings\u2026"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "view.layout",
+        "title": "Toggle Terminal Layout"
+      },
+      {
+        "id": "view.zoom-in",
+        "title": "Zoom In",
+        "accelerator": "CmdOrCtrl+="
+      },
+      {
+        "id": "view.zoom-out",
+        "title": "Zoom Out",
+        "accelerator": "CmdOrCtrl+-"
+      },
+      {
+        "id": "view.zoom-reset",
+        "title": "Reset Zoom",
+        "accelerator": "CmdOrCtrl+0"
+      }
+    ]
+  },
+  {
+    "title": "Go",
+    "items": [
+      {
+        "id": "view.open-editors",
+        "title": "Go to Open Editor\u2026",
+        "accelerator": "CmdOrCtrl+P"
+      },
+      {
+        "id": "go.next",
+        "title": "Next Editor",
+        "accelerator": "Ctrl+Tab"
+      },
+      {
+        "id": "go.previous",
+        "title": "Previous Editor",
+        "accelerator": "Ctrl+Shift+Tab"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "editor.action.gotoLine",
+        "title": "Go to Line\u2026",
+        "accelerator": "Ctrl+G"
+      },
+      {
+        "id": "editor.action.quickOutline",
+        "title": "Go to Symbol in Editor\u2026",
+        "accelerator": "CmdOrCtrl+Shift+O"
+      },
+      {
+        "id": "editor.action.revealDefinition",
+        "title": "Go to Definition",
+        "accelerator": "F12"
+      },
+      {
+        "id": "editor.action.goToReferences",
+        "title": "Go to References",
+        "accelerator": "Shift+F12"
+      },
+      {
+        "id": "editor.action.marker.nextInFiles",
+        "title": "Next Problem",
+        "accelerator": "F8"
+      },
+      {
+        "id": "editor.action.marker.prevInFiles",
+        "title": "Previous Problem",
+        "accelerator": "Shift+F8"
+      }
+    ]
+  },
+  {
+    "title": "Terminal",
+    "items": [
+      {
+        "id": "terminal.focus",
+        "title": "Focus Terminal"
+      },
+      {
+        "id": "terminal.review",
+        "title": "Review Recent Output"
+      },
+      {
+        "id": "terminal.clear",
+        "title": "Clear Scrollback"
+      },
+      {
+        "id": "terminal.interrupt",
+        "title": "Interrupt Command",
+        "accelerator": "Ctrl+Shift+C"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "terminal.workflows",
+        "title": "Build Workflows\u2026"
+      },
+      {
+        "id": "terminal.stop-task",
+        "title": "Stop Running Task"
+      }
+    ]
+  },
+  {
+    "title": "Window",
+    "items": [
+      {
+        "native": "minimize"
+      },
+      {
+        "native": "maximize"
+      },
+      {
+        "native": "fullscreen"
+      },
+      {
+        "native": "bring_all_to_front"
+      },
+      {
+        "native": "separator"
+      },
+      {
+        "id": "window.close",
+        "title": "Close Window",
+        "accelerator": "CmdOrCtrl+Shift+W"
+      }
+    ]
+  }
+]

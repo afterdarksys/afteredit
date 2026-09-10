@@ -1,3 +1,4 @@
+import type { EditorMenuRequest } from './menuCommands';
 import { useAccessibility } from './AccessibilityContext';
 import { accessibleEditorOptions, accessibleEditorTheme } from './accessibility';
 import { cycleRegion } from './focus';
@@ -5,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Extension } from './extensions';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
-type Props={root:string;settingsJSON:string;onSettingsChange:(text:string)=>void;path:string;value:string;onChange:(value:string)=>void;onSave:()=>void;options:EditorPreferences;extensions:Extension[]};
+type Props={menuRequest?:EditorMenuRequest;onReady:(ready:boolean)=>void;root:string;settingsJSON:string;onSettingsChange:(text:string)=>void;path:string;value:string;onChange:(value:string)=>void;onSave:()=>void;options:EditorPreferences;extensions:Extension[]};
 export default function CompatibilityEditor(props:Props){
  const accessibility=useAccessibility();
  const accessRef=useRef(accessibility);accessRef.current=accessibility;
@@ -34,6 +35,9 @@ export default function CompatibilityEditor(props:Props){
   if(ready){send({type:'document',...document()});}
  },[props.path,props.value,props.options,ready,accessibility]);
  useEffect(()=>{if(ready)send({type:'settings',settingsJSON:props.settingsJSON});},[props.settingsJSON,ready]);
+ useEffect(()=>{props.onReady(ready);return()=>props.onReady(false);},[ready,props.onReady]);
+ const handledMenu=useRef(props.menuRequest?.sequence);
+ useEffect(()=>{if(ready&&props.menuRequest&&handledMenu.current!==props.menuRequest.sequence){handledMenu.current=props.menuRequest.sequence;send({type:'command',command:props.menuRequest.id});}},[ready,props.menuRequest]);
  const commands=props.extensions.filter(e=>e.enabled&&e.web).flatMap(e=>{const c=e.web!.manifest.contributes?.commands;return (Array.isArray(c)?c:[]).filter(c=>typeof c.command==='string').map(c=>({id:c.command,title:String(c.title??c.command)}));});
  return <div className="editor-host"><div className="keymap-status"><strong>Experimental VS Code editor</strong> · Standard bindings; native LSP and Vim/Emacs use the regular editor. <button onClick={props.onSave}>Save</button>{commands.length>0&&<select aria-label="Run extension command" disabled={!ready} value="" onChange={e=>send({type:'command',command:e.target.value})}><option value="">Run extension command…</option>{commands.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select>}</div><iframe ref={frame} title="VS Code extension editor" onLoad={()=>send({type:'init',...document(),extensions:latest.current.extensions})} src="/compat.html" style={{border:0,width:'100%',flex:1,minHeight:0}}/><div className="keymap-status" role="status">{status}</div></div>;
 }

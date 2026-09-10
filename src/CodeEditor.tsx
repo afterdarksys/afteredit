@@ -1,3 +1,4 @@
+import type { EditorMenuRequest } from './menuCommands';
 import EditorNavigation from './EditorNavigation';
 import { useAccessibility } from './AccessibilityContext';
 import { accessibleEditorOptions, accessibleEditorTheme } from './accessibility';
@@ -15,12 +16,21 @@ import Editor from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
-export default function CodeEditor({ infrastructureDiagnostics, breakpoints, onToggleBreakpoint, debugLocation, path, value, onChange, options, onSave, extensions, revealLine, servers, onNavigate, onError }: { infrastructureDiagnostics:InfrastructureDiagnostic[]; breakpoints:Breakpoint[]; onToggleBreakpoint:(path:string,line:number)=>void; debugLocation?:{path:string;line:number}; path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number; servers: ConnectedServer[]; onNavigate:(path:string,line:number)=>void; onError:(text:string)=>void }) {
+export default function CodeEditor({ menuRequest, onReady, infrastructureDiagnostics, breakpoints, onToggleBreakpoint, debugLocation, path, value, onChange, options, onSave, extensions, revealLine, servers, onNavigate, onError }: { menuRequest?:EditorMenuRequest; onReady:(ready:boolean)=>void; infrastructureDiagnostics:InfrastructureDiagnostic[]; breakpoints:Breakpoint[]; onToggleBreakpoint:(path:string,line:number)=>void; debugLocation?:{path:string;line:number}; path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number; servers: ConnectedServer[]; onNavigate:(path:string,line:number)=>void; onError:(text:string)=>void }) {
   const accessibility = useAccessibility();
   const resolvedTheme = accessibleEditorTheme(accessibility, ['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark');
   const [instance, setInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
   useEffect(()=>{if(!instance)return;const focus=()=>instance.focus();window.addEventListener('afteredit:focus-editor',focus);return()=>window.removeEventListener('afteredit:focus-editor',focus);},[instance]);
   useEffect(()=>{const model=instance?.getModel();if(!model)return;monaco.editor.setModelMarkers(model,'infrastructure',infrastructureDiagnostics.filter(d=>d.path===path).map(d=>({message:d.message,source:d.source,startLineNumber:d.line,startColumn:d.column,endLineNumber:d.line,endColumn:d.column+1,severity:d.severity==='error'?monaco.MarkerSeverity.Error:d.severity==='warning'?monaco.MarkerSeverity.Warning:monaco.MarkerSeverity.Info})));const changed=model.onDidChangeContent(()=>monaco.editor.setModelMarkers(model,'infrastructure',[]));return()=>{changed.dispose();monaco.editor.setModelMarkers(model,'infrastructure',[]);};},[instance,path,infrastructureDiagnostics]);
+  useEffect(()=>{onReady(!!instance);return()=>onReady(false);},[instance,onReady]);
+  const handledMenu=useRef(menuRequest?.sequence);
+  useEffect(()=>{
+    if(!instance||!menuRequest||handledMenu.current===menuRequest.sequence)return;
+    handledMenu.current=menuRequest.sequence;instance.focus();
+    const action=instance.getAction(menuRequest.id);
+    if(!action?.isSupported()){onError('This editor command is unavailable for the current language or selection.');return;}
+    void action.run().catch(onError);
+  },[instance,menuRequest,onError]);
   const toggleBreakpoint=useRef(onToggleBreakpoint);toggleBreakpoint.current=onToggleBreakpoint;
   useEffect(()=>{if(!instance)return;const listener=instance.onMouseDown(e=>{if(e.target.type===monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN&&e.target.position&&!path.includes('://'))toggleBreakpoint.current(path,e.target.position.lineNumber);});return()=>listener.dispose();},[instance,path]);
   useEffect(()=>{if(!instance)return;const rows:monaco.editor.IModelDeltaDecoration[]=breakpoints.filter(b=>b.path===path&&b.enabled!==false).map(b=>({range:new monaco.Range(b.line,1,b.line,1),options:{glyphMarginClassName:b.verified?'debug-breakpoint':'debug-breakpoint-pending',glyphMarginHoverMessage:{value:b.message??'Breakpoint'}}}));if(debugLocation?.path===path)rows.push({range:new monaco.Range(debugLocation.line,1,debugLocation.line,1),options:{isWholeLine:true,className:'debug-current-line'}});const decorations=instance.createDecorationsCollection(rows);return()=>decorations.clear();},[instance,path,breakpoints,debugLocation]);

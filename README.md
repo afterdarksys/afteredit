@@ -488,3 +488,22 @@ result bundles, simulator and connected-device commands, LLDB configuration,
 signing overrides, archive/export, and Xcode designer handoffs. SwiftUI Canvas
 and Interface Builder run in Xcode. See [Apple development](APPLE-DEVELOPMENT.md)
 for setup, verification commands and the remaining live-validation limits.
+
+### Native IDE menus
+
+The desktop menu bar includes File, Edit, Selection, View, Go, Terminal and Window.
+File supports new untitled buffers, open/add folder, Save/Save As/Save All, revert,
+and guarded editor/project closing. Save new buffers before quitting; the existing
+scratch buffer remains locally persistent. Edit keeps native clipboard/undo actions
+and adds find/replace, comments, formatting and rename. Selection exposes line,
+occurrence and multi-cursor operations. Go includes open-editor switching, line,
+symbol, definition, references and problems; language-aware actions need a provider.
+View opens workbench panels and controls the explorer, terminal layout and zoom.
+Terminal focuses the existing shell, reviews/clears scrollback, interrupts a command
+or stops a build task. Window uses native minimize, zoom, fullscreen and bring-to-front
+roles. Close Window and Quit retain the unsaved-buffer confirmation.
+
+On macOS, use ⌘N for a new file, ⌘⇧S for Save As, ⌘⌥O to add a project folder,
+⌘P to switch open editors, and ⌘⇧O for symbols in the current editor. Commands are
+also available from the command palette. The menu catalogue is shared with the
+workbench; editor actions are disabled while its editor is unavailable.
