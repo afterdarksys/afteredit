@@ -17,4 +17,15 @@ for(const command of ['terraform','tofu'])try{
  const r=await run(command,['validate','-json'],tf);assert.notEqual(r.code,0);const data=JSON.parse(r.output.slice(r.output.indexOf('{')));assert.equal(data.valid,false);assert.ok(data.diagnostics.some(d=>d.range?.filename?.endsWith('main.tf')));console.log(command+': real validation failure includes source diagnostics');
 }catch(e){failures++;console.error(String(e));}
 try{const r=await run('ansible-playbook',['--syntax-check',playbook],ansible);assert.equal(r.code,0,r.output);console.log('Ansible: local playbook syntax check passed');}catch(e){failures++;console.error(String(e));}
+for(const [command,args] of [['tflint',['--format=json']],['ansible-lint',['--offline','--nocolor','-f','sarif',playbook]],['python3',['-I','-c',"import importlib.metadata; print(importlib.metadata.version('ansibug'))"]]]) {
+ try {
+  const version=await run(command,command==='python3'?args:['--version'],root);
+  if(version.code!==0){console.log(command+': SKIPPED (version/module check failed)');continue;}
+  if(command==='python3'){console.log('Ansibug: installed module version '+version.output.trim()+'; attach flow still needs a live debugger test');continue;}
+  const result=await run(command,args,command==='tflint'?tf:ansible);
+  const data=JSON.parse(result.output.slice(result.output.indexOf('{')));
+  assert.ok(command==='tflint'?Array.isArray(data.issues):Array.isArray(data.runs));
+  console.log(command+': live JSON diagnostics parsed (exit '+result.code+')');
+ }catch(e){if(e.code==='ENOENT')console.log(command+': SKIPPED (not installed)');else{failures++;console.error(command+': '+String(e));}}
+}
 console.log('Fixtures: '+root);process.exitCode=failures?1:0;
