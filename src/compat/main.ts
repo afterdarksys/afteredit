@@ -1,10 +1,12 @@
+import {URI} from '@codingame/monaco-vscode-api/vscode/vs/base/common/uri';
+import {normalizeExtensionSettings} from '../extensionSettings';
 import '@codingame/monaco-vscode-api/vscode/vs/editor/contrib/suggest/browser/suggestController';
 import '@codingame/monaco-vscode-api/vscode/vs/editor/contrib/hover/browser/hoverContribution';
 import '@codingame/monaco-vscode-api/vscode/vs/editor/contrib/format/browser/formatActions';
 import '@codingame/monaco-vscode-api/vscode/vs/editor/contrib/find/browser/findController';
 import getEditors from '@codingame/monaco-vscode-editor-service-override';
 import getLanguages from '@codingame/monaco-vscode-languages-service-override';
-import getConfiguration from '@codingame/monaco-vscode-configuration-service-override';
+import getConfiguration, {initUserConfiguration,getUserConfiguration,onUserConfigurationChange,updateUserConfiguration} from '@codingame/monaco-vscode-configuration-service-override';
 import getKeybindings from '@codingame/monaco-vscode-keybindings-service-override';
 import getNotifications from '@codingame/monaco-vscode-notifications-service-override';
 import { initialize, getService, ICommandService } from '@codingame/monaco-vscode-api';
@@ -32,7 +34,9 @@ const report=(e:unknown)=>{status.textContent=String(e);send({type:'error',messa
 window.addEventListener('error',e=>report(e.message));
 window.addEventListener('unhandledrejection',e=>report(e.reason));
 async function start(data:any){
- await initialize({...getExtensions({enableWorkerExtensionHost:true}),...getModels(),...getEditors(async()=>undefined),...getLanguages(),...getConfiguration(),...getKeybindings(),...getNotifications(),[IWebWorkerService.toString()]:new SyncDescriptor(Workers)});
+ await initUserConfiguration(normalizeExtensionSettings(data.settingsJSON??'{}'));
+ await initialize({...getExtensions({enableWorkerExtensionHost:true}),...getModels(),...getEditors(async()=>undefined),...getLanguages(),...getConfiguration(),...getKeybindings(),...getNotifications(),[IWebWorkerService.toString()]:new SyncDescriptor(Workers)},undefined,{workspaceProvider:{workspace:data.root?{folderUri:URI.file(data.root)}:undefined,trusted:true,open:async()=>false}});
+ onUserConfigurationChange(()=>{void getUserConfiguration().then(settingsJSON=>send({type:"settings",settingsJSON})).catch(report);});
  for(const extension of (data.extensions as Extension[]).filter(e=>e.enabled&&e.web)){
   const registered=registerExtension(extension.web!.manifest as IExtensionManifest,ExtensionHostKind.LocalWebWorker);
   for(const [file,base64] of Object.entries(extension.web!.files)){
@@ -66,10 +70,18 @@ function setDocument(data:any){
  }finally{applying=false;}
 }
 let started=false;
+let configurationQueue=Promise.resolve();
+function updateSettings(text:string){
+ configurationQueue=configurationQueue.then(async()=>{
+  const next=normalizeExtensionSettings(text);
+  if(normalizeExtensionSettings(await getUserConfiguration())!==next)await updateUserConfiguration(next);
+ }).catch(report);
+}
 window.addEventListener('message',event=>{
  if(event.source!==parent||event.origin!==location.origin||event.data?.source!=='afteredit-shell')return;
  const data=event.data;
  if(data.type==='init'&&!started){started=true;void start(data).catch(report);}
+ if(data.type==='settings'&&typeof data.settingsJSON==='string')updateSettings(data.settingsJSON);
  if(data.type==='document')setDocument(data);
  if(data.type==='command'){editor?.focus();void getService(ICommandService).then(service=>service.executeCommand(data.command)).then(result=>send({type:'command-result',message:typeof result==='string'?result:'Command completed'})).catch(report);}
 });
