@@ -25,3 +25,12 @@ local value `42`, watch evaluation, step over, continue and normal termination.
 The earlier launch timeout did not recur. This opt-in test requires Xcode LLDB and
 permission to debug a temporary local C program; it is not a native UI test.
 Startup cancellation and adapter-close regressions are covered by frontend tests.
+
+## AI transport
+
+`cargo test --manifest-path src-tauri/Cargo.toml ai::` exercises real loopback
+HTTP requests with OpenAI-compatible and Anthropic-shaped fixtures. It checks
+request authentication/token fields, SSE text delivery, JSON fallback, HTTP errors,
+malformed/incomplete responses, and socket closure on cancellation. No paid API
+keys are used. These checks validate transport behavior, not provider availability
+or model quality; ledger reservation tests run alongside them.

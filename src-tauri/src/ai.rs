@@ -200,6 +200,20 @@ async fn ask_inner(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(err)?;
+    let text = provider_request(&client, url, &request, protocol, token_parameter, &system, &user, |text| {
+        if let Some(id)=&request.request_id {let _=app.emit("ai:chunk",Delta{request_id:id.clone(),text});}
+    }).await?;
+    Ok(Reply {
+        text,
+        reserved_units,
+        requests,
+    })
+}
+async fn provider_request(
+    client:&reqwest::Client, url:reqwest::Url, request:&Request,
+    protocol:&str, token_parameter:&str, system:&str, user:&str,
+    mut emit:impl FnMut(String),
+)->Result<String,String>{
     let mut body = provider_body(
         protocol,
         token_parameter,
@@ -234,7 +248,7 @@ async fn ask_inner(
         if event_stream {
             for delta in decoder.push(&chunk,protocol)? {
                 text.push_str(&delta);
-                if let Some(id)=&request.request_id {let _=app.emit("ai:chunk",Delta{request_id:id.clone(),text:delta});}
+                emit(delta);
             }
             if decoder.done{break;}
         }else{bytes.extend_from_slice(&chunk);}
@@ -246,12 +260,9 @@ async fn ask_inner(
         let json:serde_json::Value=serde_json::from_slice(&bytes).map_err(|_|"Provider returned invalid JSON".to_string())?;
         text=response_text(protocol,&json)?;
     }
-    Ok(Reply {
-        text,
-        reserved_units,
-        requests,
-    })
+    Ok(text)
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +412,76 @@ mod cancellation_tests {
   let future=async move {let _guard=guard;std::future::pending::<Result<(),String>>().await};
   assert!(tauri::async_runtime::block_on(cancelable(future,receive)).unwrap_err().contains("cancelled"));
   assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+ }
+}
+
+#[cfg(test)]
+mod http_tests {
+ use super::*;
+ use std::io::{BufRead, BufReader, Read, Write};
+ use std::net::TcpListener;
+ fn request() -> Request {
+  serde_json::from_value(serde_json::json!({"requestId":"fixture","stream":true,"endpoint":"http://localhost","key":"fixture-key","model":"fixture","prompt":"hello","context":"","instructions":"","maxTokens":64,"dailyUnits":10000,"dailyRequests":10})).unwrap()
+ }
+ fn server(status:&str, content_type:&str, body:Vec<u8>) -> (reqwest::Url,std::thread::JoinHandle<(String,serde_json::Value)>) {
+  let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+  let url=reqwest::Url::parse(&format!("http://{}/chat",listener.local_addr().unwrap())).unwrap();
+  let status=status.to_string();let content_type=content_type.to_string();
+  let worker=std::thread::spawn(move || {
+   let (mut socket,_)=listener.accept().unwrap();socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+   let mut reader=BufReader::new(socket.try_clone().unwrap());let mut headers=String::new();let mut length=0;
+   loop {let mut line=String::new();assert!(reader.read_line(&mut line).unwrap()>0);if line=="\r\n"{break;}if let Some(value)=line.to_ascii_lowercase().strip_prefix("content-length:"){length=value.trim().parse().unwrap();}headers.push_str(&line);}
+   let mut payload=vec![0;length];reader.read_exact(&mut payload).unwrap();
+   write!(socket,"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+   // Separate writes exercise the real response body reader; decoder unit tests
+   // additionally guarantee behavior for every byte boundary.
+   for part in body.chunks(7){if socket.write_all(part).is_err(){break;}}
+   (headers,serde_json::from_slice(&payload).unwrap())
+  });(url,worker)
+ }
+ fn client()->reqwest::Client {reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).redirect(reqwest::redirect::Policy::none()).build().unwrap()}
+ #[test]fn streamed_http_protocols_send_headers_and_emit_text(){
+  for (protocol,body) in [
+   ("openai","data: {\"choices\":[{\"delta\":{\"content\":\"héllo\"}}]}\n\ndata: [DONE]\n\n"),
+   ("anthropic","data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"héllo\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n")
+  ] {
+   let (url,worker)=server("200 OK","text/event-stream",body.as_bytes().to_vec());let mut deltas=vec![];
+   let text=tauri::async_runtime::block_on(provider_request(&client(),url,&request(),protocol,"max_completion_tokens","system","user",|delta|deltas.push(delta))).unwrap();
+   assert_eq!(text,"héllo");assert_eq!(deltas.concat(),text);
+   let (headers,body)=worker.join().unwrap();assert_eq!(body["stream"],true);
+   if protocol=="anthropic" {assert!(headers.contains("x-api-key: fixture-key"));assert!(headers.contains("anthropic-version: 2023-06-01"));assert_eq!(body["max_tokens"],64);}
+   else {assert!(headers.contains("authorization: Bearer fixture-key"));assert_eq!(body["max_completion_tokens"],64);}
+  }
+ }
+ #[test]fn http_fallback_errors_and_incomplete_streams(){
+  for (status,kind,body,expected) in [
+   ("200 OK","application/json","{\"choices\":[{\"message\":{\"content\":\"fallback\"}}]}","fallback"),
+   ("429 Too Many Requests","application/json","{}","HTTP 429"),
+   ("302 Found","application/json","{}","HTTP 302"),
+   ("200 OK","application/json","invalid","invalid JSON"),
+   ("200 OK","text/event-stream","data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n","before completion"),
+   ("200 OK","text/event-stream","data: {\"error\":{}}\n\n","error during streaming")
+  ] {
+   let (url,worker)=server(status,kind,body.as_bytes().to_vec());
+   let result=tauri::async_runtime::block_on(provider_request(&client(),url,&request(),"openai","max_tokens","system","user",|_|{}));
+   if expected=="fallback"{assert_eq!(result.unwrap(),expected);}else{assert!(result.unwrap_err().contains(expected));}
+   worker.join().unwrap();
+  }
+ }
+ #[test]fn cancellation_closes_an_inflight_http_response(){
+  let listener=TcpListener::bind("127.0.0.1:0").unwrap();let url=reqwest::Url::parse(&format!("http://{}/chat",listener.local_addr().unwrap())).unwrap();
+  let (cancel,receiver)=futures_channel::oneshot::channel();
+  let worker=std::thread::spawn(move || {
+   let (mut socket,_)=listener.accept().unwrap();socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+   let mut reader=BufReader::new(socket.try_clone().unwrap());let mut length=0;
+   loop{let mut line=String::new();assert!(reader.read_line(&mut line).unwrap()>0);if line=="\r\n"{break;}if let Some(v)=line.to_ascii_lowercase().strip_prefix("content-length:"){length=v.trim().parse().unwrap();}}
+   let mut body=vec![0;length];reader.read_exact(&mut body).unwrap();
+   socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap();
+   cancel.send(()).unwrap();
+   let mut byte=[0];match reader.read(&mut byte){Ok(0)=>{},Err(e) if e.kind()==std::io::ErrorKind::ConnectionReset=>{},other=>panic!("Cancelled connection remained open: {other:?}")}
+  });
+  let client=client();let request=request();
+  let result=tauri::async_runtime::block_on(cancelable(provider_request(&client,url,&request,"openai","max_tokens","system","user",|_|{}),receiver));
+  assert!(result.unwrap_err().contains("cancelled"));worker.join().unwrap();
  }
 }
