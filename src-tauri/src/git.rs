@@ -6,11 +6,13 @@ use std::{path::{Component,Path,PathBuf},process::Command,time::Duration};
 pub struct GitFile {pub path:String,pub original_path:Option<String>,pub index:String,pub worktree:String}
 #[derive(Serialize)]
 pub struct GitStatus {branch:String,files:Vec<GitFile>}
-fn git(root:&Path,args:&[&str])->Result<Output,String>{
+fn git(root:&Path,args:&[&str])->Result<Output,String>{git_index(root,args,None)}
+fn git_index(root:&Path,args:&[&str],index:Option<&Path>)->Result<Output,String>{
     let binary=crate::lsp_installer::resolve_binary("git").ok_or("Git was not found. Install Git and reopen AfterEdit.")?;
     let mut command=Command::new(binary);
     command.current_dir(root).args(["--no-pager","--literal-pathspecs"]).args(args);
     for (key,_) in std::env::vars_os(){if key.to_string_lossy().starts_with("GIT_"){command.env_remove(key);}}
+    if let Some(index)=index{command.env("GIT_INDEX_FILE",index);}
     command.env("GIT_TERMINAL_PROMPT","0").env("GIT_OPTIONAL_LOCKS","0").env("LC_ALL","C");
     run(command,Duration::from_secs(30))
 }
@@ -81,6 +83,78 @@ mod tests{
   std::fs::write(dir.join("file name.txt"),"first\n").unwrap();success(git(&dir,&["add","--","file name.txt"]).unwrap()).unwrap();
   let rows=parse_status(&success(git(&dir,&["status","--porcelain=v1","-z"]).unwrap()).unwrap()).unwrap();assert_eq!(rows[0].index,"A");
   assert!(success(git(&dir,&["diff","--cached","--no-ext-diff","--no-textconv"]).unwrap()).unwrap().contains("+first"));
+  std::fs::remove_dir_all(dir).unwrap();
+ }
+}
+
+#[tauri::command]
+pub async fn git_stage(state:tauri::State<'_,WorkspaceState>,root:String,path:String,stage:bool)->Result<(),String>{
+ let root=repository(&state,&root)?;valid_path(&path)?;
+ tauri::async_runtime::spawn_blocking(move||{
+  let rows=parse_status(&success(git(&root,&["status","--porcelain=v1","-z","--untracked-files=all"])?)?)?;
+  let row=rows.iter().find(|r|r.path==path).ok_or("File status changed. Refresh Git.")?;
+  let mut paths=vec![path.as_str()];if let Some(original)=&row.original_path{paths.push(original);}
+  let mut args=if stage{vec!["add","--all","--"]}else if git(&root,&["rev-parse","--verify","HEAD"])?.code==0{vec!["reset","--quiet","HEAD","--"]}else{vec!["rm","--cached","--quiet","--"]};
+  args.extend(paths);success(git(&root,&args)?).map(|_|())
+ }).await.map_err(|e|e.to_string())?
+}
+#[derive(Serialize)]
+pub struct StagedReview {tree:String,diff:String}
+#[tauri::command]
+pub async fn git_review_staged(state:tauri::State<'_,WorkspaceState>,root:String)->Result<StagedReview,String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||{
+  let tree=success(git(&root,&["write-tree"])?)?.trim().to_string();
+  let diff=success(git(&root,&["diff","--cached","--no-color","--no-ext-diff","--no-textconv"])?)?;
+  if diff.is_empty(){return Err("No staged changes to commit.".into());}
+  if success(git(&root,&["write-tree"])?)?.trim()!=tree{return Err("Staging changed while loading the review. Try again.".into());}
+  Ok(StagedReview{tree,diff})
+ }).await.map_err(|e|e.to_string())?
+}
+fn commit_snapshot(root:&Path,message:&str,tree:&str)->Result<String,String>{
+ use std::io::Write;
+ if message.trim().is_empty() || message.len()>10000{return Err("Enter a commit message of 1–10,000 bytes.".into());}
+ let index_path=success(git(root,&["rev-parse","--git-path","index"])?)?;
+ let index_path=root.join(index_path.trim_end());
+ let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos();
+ let temporary=index_path.with_file_name(format!("afteredit-index-{}-{stamp}",std::process::id()));
+ let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e|e.to_string())?;
+ let result=(||{
+  let bytes=std::fs::read(&index_path).map_err(|e|e.to_string())?;
+  file.write_all(&bytes).map_err(|e|e.to_string())?;drop(file);
+  let actual=success(git_index(root,&["write-tree"],Some(&temporary))?)?;
+  if actual.trim()!=tree{return Err("Staged changes changed since review. Review them again before committing.".into());}
+  // Commit the reviewed index snapshot. Concurrent staging in the real index remains intact.
+  success(git_index(root,&["commit","-m",message],Some(&temporary))?)
+ })();
+ let _=std::fs::remove_file(temporary);result
+}
+#[tauri::command]
+pub async fn git_commit(state:tauri::State<'_,WorkspaceState>,root:String,message:String,tree:String)->Result<String,String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||commit_snapshot(&root,&message,&tree)).await.map_err(|e|e.to_string())?
+}
+#[cfg(test)]
+mod mutation_tests{
+ use super::*;
+ #[test]fn commit_rejects_stale_review_and_preserves_working_tree(){
+  let dir=std::env::temp_dir().join(format!("afteredit-git-write-{}",std::process::id()));std::fs::create_dir_all(&dir).unwrap();
+  for args in [vec!["init"],vec!["config","user.name","AfterEdit Test"],vec!["config","user.email","test@example.invalid"],vec!["config","commit.gpgsign","false"]]{success(git(&dir,&args).unwrap()).unwrap();}
+  std::fs::write(dir.join("file.txt"),"first
+").unwrap();success(git(&dir,&["add","--","file.txt"]).unwrap()).unwrap();
+  let first=success(git(&dir,&["write-tree"]).unwrap()).unwrap();
+  std::fs::write(dir.join("file.txt"),"second
+").unwrap();success(git(&dir,&["add","--","file.txt"]).unwrap()).unwrap();
+  assert!(commit_snapshot(&dir,"stale",first.trim()).is_err());
+  let tree=success(git(&dir,&["write-tree"]).unwrap()).unwrap();
+  std::fs::write(dir.join("file.txt"),"unsaved on disk
+").unwrap();
+  commit_snapshot(&dir,"Reviewed commit",tree.trim()).unwrap();
+  assert_eq!(success(git(&dir,&["show","HEAD:file.txt"]).unwrap()).unwrap(),"second
+");
+  assert_eq!(std::fs::read_to_string(dir.join("file.txt")).unwrap(),"unsaved on disk
+");
+  assert!(success(git(&dir,&["diff","--cached"]).unwrap()).unwrap().is_empty());
   std::fs::remove_dir_all(dir).unwrap();
  }
 }

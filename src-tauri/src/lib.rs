@@ -29,7 +29,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
-            git::git_status, git::git_diff,
+            git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
             session::restore_session, session::save_session,
             workspace::choose_path,
             workspace::list_directory,
