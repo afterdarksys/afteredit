@@ -1,3 +1,4 @@
+mod apple;
 mod ai;
 mod ai_stream;
 mod dap;
@@ -32,6 +33,7 @@ pub fn run() {
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
             toolchain::inspect_tools,
+            apple::apple_toolchain, apple::apple_projects,
             git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
             session::restore_session, session::save_session,
             workspace::choose_path,
