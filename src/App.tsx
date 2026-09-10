@@ -1,3 +1,4 @@
+import CommandPalette from './CommandPalette';
 import { cycleRegion, focusRegion } from './focus';
 import AccessibilityPanel from './AccessibilityPanel';
 import { restoreAccessibility } from './accessibility';
@@ -67,7 +68,6 @@ function App() {
   const [trusted, setTrusted] = useState(false);
   const [pendingTasks, setPendingTasks] = useState<string[]>([]);
   const [palette, setPalette] = useState(false);
-  const [query, setQuery] = useState('');
   const runningRef = useRef(false);
   const dirtyRef = useRef(false);
   dirtyRef.current = Object.values(buffers).some(b => b.value !== b.saved);
@@ -231,6 +231,7 @@ function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'F6' && !palette) { e.preventDefault(); cycleRegion(e.shiftKey); return; }
+      if (palette) return;
       if (e.defaultPrevented) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
@@ -286,7 +287,7 @@ function App() {
       </div>
     </div>
     <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
-    {palette && <div className="command-palette-overlay" onClick={() => setPalette(false)}><div className="command-palette" role="dialog" aria-label="Command palette" onClick={e => e.stopPropagation()}><input className="cp-input" autoFocus placeholder="Search commands…" value={query} onChange={e => setQuery(e.target.value)} />{commands.filter(c => c.title.toLowerCase().includes(query.toLowerCase())).map(c => <button className="cp-item" key={c.title} onClick={() => { setPalette(false); c.action(); }}>{c.title}</button>)}</div></div>}
+    {palette && <CommandPalette commands={commands} onClose={()=>setPalette(false)}/>}
   </div>;
 }
 export default App;

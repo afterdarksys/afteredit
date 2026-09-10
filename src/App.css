@@ -275,3 +275,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .skip-link { position:absolute; left:8px; top:-100px; z-index:3000; padding:10px; background:#fff; color:#000; }
 .skip-link:focus { top:8px; }
+dialog.accessible-dialog { position:fixed; top:10%; margin:0 auto; width:560px; max-height:80%; overflow:auto; padding:16px; color:#eee; background:#202124; border:2px solid #aaa; }
+dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
+.accessible-dialog h2 { margin-top:0; }
+.accessible-dialog .cp-item { width:100%; }
