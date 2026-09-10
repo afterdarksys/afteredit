@@ -1,3 +1,4 @@
+import { reconcileDisk } from './fileChanges';
 import { useSoundCues } from './useSoundCues';
 import OutputLog from './OutputLog';
 import { AccessibilityContext, useReducedMotion } from './AccessibilityContext';
@@ -56,6 +57,8 @@ function App() {
   const [revealLine,setRevealLine]=useState(0);
   const buffersRef=useRef(buffers);buffersRef.current=buffers;
   const [active, setActive] = useState('');
+  const [diskChange,setDiskChange]=useState<{path:string;text?:string;error?:string}|null>(null);
+  const [reviewDisk,setReviewDisk]=useState(false);
   const [sessionReady,setSessionReady] = useState(!isTauri());
   const [roots, setRoots] = useState<string[]>([]);
   const [root, setRoot] = useState('');
@@ -104,6 +107,36 @@ function App() {
     }).catch(e=>{if(!disposed)report(e);}).finally(()=>{if(!disposed)setSessionReady(true);});
     return()=>{disposed=true;};
   },[]);
+  useEffect(()=>{
+    if(!isTauri() || !active || !sessionReady)return;
+    let disposed=false,checking=false;
+    setDiskChange(null);setReviewDisk(false);
+    const check=async()=>{
+      if(disposed||checking)return;
+      const before=buffersRef.current[active];if(!before)return;
+      checking=true;
+      try{
+        const text=await invoke<string>('read_file',{path:active});
+        if(disposed)return;
+        const current=buffersRef.current[active];if(!current)return;
+        const result=reconcileDisk(current,before.saved,text);
+        if(result.stale)return;
+        if(result.conflict)setDiskChange({path:active,text});
+        else {
+          setDiskChange(null);
+          if(result.buffer!==current){
+            setBuffers(buffers=>{const b=buffers[active];return b?{...buffers,[active]:reconcileDisk(b,before.saved,text).buffer}:buffers;});
+            setStatus('Reloaded external changes in '+basename(active));
+            if(basename(active)==='.afteredit.json')setRevision(n=>n+1);
+          }
+        }
+      }catch(e){if(!disposed)setDiskChange({path:active,error:String(e)});}
+      finally{checking=false;}
+    };
+    void check();const timer=setInterval(()=>void check(),3000);
+    window.addEventListener('focus',check);
+    return()=>{disposed=true;clearInterval(timer);window.removeEventListener('focus',check);};
+  },[active,sessionReady]);
   const sessionFiles=JSON.stringify(Object.keys(buffers));
   useEffect(()=>{
     if(!sessionReady || !isTauri())return;
@@ -291,6 +324,14 @@ function App() {
       </aside>
       <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
         <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+          {diskChange?.path===active&&<section className="disk-change" aria-label="External file change">
+            <p role="status">{diskChange.error ? 'File unavailable on disk: '+diskChange.error : 'This file changed on disk. Your unsaved edits are preserved.'}</p>
+            {diskChange.text!==undefined&&<><button onClick={()=>setReviewDisk(v=>!v)}>Review disk version</button>
+            <button onClick={()=>{if(window.confirm('Discard your unsaved edits and reload the current disk version?'))void reloadFile();}}>Reload disk version (discard edits)</button>
+            <button onClick={()=>{const text=diskChange.text!;setBuffers(b=>({...b,[active]:{...b[active],saved:text}}));setDiskChange(null);setStatus('Kept your edits. Save to replace the reviewed disk version.');}}>Keep my edits against this disk version</button>
+            {reviewDisk&&<textarea readOnly aria-label="Current disk version" value={diskChange.text}/>}</>}
+            <button onClick={()=>void saveAs()}>Save my buffer as a new file</button>
+          </section>}
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
             {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor key={extensionRevision} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor infrastructureDiagnostics={infrastructureProblems} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}

@@ -299,3 +299,6 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 /* Reserve workspace height when zoom reduces the available logical viewport. */
 .center-area.layout-stacked .terminal-panel { flex:0 1 35%; max-height:45%; overflow:auto; }
 .editor-tabs > button { white-space:nowrap; flex-shrink:0; }
+.disk-change { padding:8px; border:2px solid #d99c30; max-height:40%; overflow:auto; flex-shrink:0; }
+.disk-change p { margin:4px 0; }
+.disk-change textarea { width:100%; min-height:100px; box-sizing:border-box; }
