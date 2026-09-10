@@ -28,3 +28,7 @@ dist-ssr
 
 # Rust build output
 src-tauri/target
+
+# Browser test artifacts
+test-results/
+playwright-report/

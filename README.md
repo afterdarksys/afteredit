@@ -395,3 +395,14 @@ action was observed. That setting was not changed.
 Browser automation is unavailable, so the new debugger and infrastructure UI still
 need interactive verification. Treat native debugging as a preview pending those
 checks; the unit suite is not a substitute for a passing debugger launch test.
+
+## Accessibility
+
+Settings → Accessibility provides whole-app zoom, workbench contrast,
+screen-reader support, reduced motion, large cursors and optional sound cues.
+F6 / Shift+F6 cycles workbench regions. Commands supports keyboard filtering and
+focus restoration. The editor exposes diagnostics and indentation reporting;
+the terminal offers static output review; AI edits have sequential text review.
+
+See [the accessibility guide](ACCESSIBILITY.md) for controls, limitations,
+automated checks and the native screen-reader validation checklist.

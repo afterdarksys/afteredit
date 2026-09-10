@@ -3,16 +3,24 @@ export default function CommandPalette({commands, onClose}: {
   commands: {title:string; action:()=>void}[]; onClose:()=>void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const previousFocus = useRef(document.activeElement as HTMLElement | null);
   const [query, setQuery] = useState('');
   const close = useRef(onClose); close.current = onClose;
   useEffect(()=>{
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = previousFocus.current;
     const node = dialog.current!;
     node.showModal();
     return ()=>{ node.close(); if (previous?.isConnected) previous.focus(); };
   },[]);
   const matches = commands.filter(c=>c.title.toLowerCase().includes(query.toLowerCase()));
   return <dialog ref={dialog} className="command-palette accessible-dialog" aria-labelledby="commands-title"
+    onKeyDown={e=>{
+      if(e.key!=='Tab') return;
+      const controls=Array.from(e.currentTarget.querySelectorAll<HTMLElement>('input, button:not(:disabled)')).filter(node=>node.getClientRects().length>0);
+      const first=controls[0],last=controls[controls.length-1];
+      if(e.shiftKey && document.activeElement===first){e.preventDefault();last?.focus();}
+      else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}
+    }}
     onCancel={e=>{e.preventDefault();close.current();}}
     onClick={e=>{if(e.target===e.currentTarget) close.current();}}>
     <div onClick={e=>e.stopPropagation()}>

@@ -290,3 +290,12 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
 .change-review pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:300px; overflow:auto; }
 .change-review h4 { margin-bottom:4px; }
+/* Keep selected controls legible when older component selectors are more specific. */
+.app-container[data-contrast="dark"] :where(button[aria-pressed="true"],button[aria-current="true"],.file-item.active),
+.app-container[data-contrast="light"] :where(button[aria-pressed="true"],button[aria-current="true"],.file-item.active) {
+  background:var(--a11y-bg) !important; color:var(--a11y-fg) !important; box-shadow:inset 0 0 0 2px var(--a11y-fg);
+}
+.app-container[data-contrast="dark"] .accessible-dialog, .app-container[data-contrast="light"] .accessible-dialog { background:var(--a11y-bg); color:var(--a11y-fg); }
+/* Reserve workspace height when zoom reduces the available logical viewport. */
+.center-area.layout-stacked .terminal-panel { flex:0 1 35%; max-height:45%; overflow:auto; }
+.editor-tabs > button { white-space:nowrap; flex-shrink:0; }
