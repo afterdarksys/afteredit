@@ -46,3 +46,12 @@ test('Swift and simulator debugging distinguish launch from attach',()=>{
  assert.throws(()=>appleDebug('/repo','out/App','device','42','device; quit'),/connected device/);
  assert.throws(()=>appleDebug('/repo','out/App','attach','0'),/process ID/);
 });
+import {defaultSigning,signingArguments,archivePlan,exportPlan,exportOptions} from './appleDevelopment.ts';
+test('signing provisioning and export settings are explicit and escaped',()=>{
+ assert.deepEqual(signingArguments(defaultSigning),[]);
+ assert.throws(()=>archivePlan({...selection,destination:'platform=iOS Simulator'},defaultSigning,'App.xcarchive'),/destination/);
+ assert.ok(!exportPlan('App.xcarchive','ExportOptions.plist','out',false).tasks[0].args.includes('-allowProvisioningUpdates'));
+ const plist=exportOptions('debugging',{...defaultSigning,style:'manual',profile:'A & B'},{'com.example.App':'A & B'});
+ assert.ok(plist.includes('A &amp; B'));assert.ok(plist.includes('<string>export</string>'));assert.ok(!plist.includes('<string>upload</string>'));
+ assert.throws(()=>signingArguments({...defaultSigning,team:'bad'}),/Team ID/);
+});

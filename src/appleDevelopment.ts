@@ -36,7 +36,7 @@ export function xcodeArguments(s:AppleSelection):string[]{
  if(s.destination)args.push('-destination',argument(s.destination,'destination'));
  return args;
 }
-export function appleBuild(s:AppleSelection,action:'build'|'test',id:string):{tasks:Task[];result?:string}{
+export function appleBuild(s:AppleSelection,action:'build'|'test',id:string,signing:AppleSigning=defaultSigning):{tasks:Task[];result?:string}{
  applePath(s.project);if(!/^[a-zA-Z0-9-]+$/.test(id))throw new Error('Invalid run identifier');
  if(s.project.endsWith('Package.swift')){
   const args=['swift',action,'--configuration',s.configuration.toLowerCase()==='release'?'release':'debug'];
@@ -47,7 +47,7 @@ export function appleBuild(s:AppleSelection,action:'build'|'test',id:string):{ta
  const result='.afteredit/apple/results/'+id+'.xcresult';const args=xcodeArguments(s);
  if(s.scheme)args.push('-derivedDataPath','.afteredit/apple/DerivedData');
  else args.push('SYMROOT=.afteredit/apple/Products','OBJROOT=.afteredit/apple/Intermediates');
- args.push('-resultBundlePath',result,action);
+ args.push(...signingArguments(signing),'-resultBundlePath',result,action);
  return {result,tasks:[{command:'/bin/mkdir',args:['-p','.afteredit/apple/results']},{command:'/usr/bin/xcodebuild',args,timeoutSeconds:1800}]};
 }
 export function appleDiagnostics(text:string,root:string,cwd='.'):InfrastructureDiagnostic[]{
@@ -99,4 +99,41 @@ export function appleDebug(root:string,executable:string,mode:'launch'|'attach'|
   }else configuration.pid=number;
  }
  return {adapter:{command:'/usr/bin/xcrun',args:['lldb-dap']},request:mode==='launch'?'launch':'attach',configuration};
+}
+export type AppleSigning={style:'project'|'automatic'|'manual'|'unsigned';team:string;profile:string;identity:string;allowUpdates:boolean};
+export const defaultSigning:AppleSigning={style:'project',team:'',profile:'',identity:'',allowUpdates:false};
+export function signingArguments(s:AppleSigning):string[]{
+ const args:string[]=[];
+ if(s.style==='unsigned')return ['CODE_SIGNING_ALLOWED=NO'];
+ if(s.team&&!/^[A-Z0-9]{10}$/.test(s.team))throw new Error('Team ID must contain ten uppercase letters or digits.');
+ if(s.style!=='project')args.push('CODE_SIGN_STYLE='+(s.style==='manual'?'Manual':'Automatic'));
+ if(s.team)args.push('DEVELOPMENT_TEAM='+s.team);
+ if(s.style==='manual'){args.push('PROVISIONING_PROFILE_SPECIFIER='+argument(s.profile,'provisioning profile'));if(s.identity)args.push('CODE_SIGN_IDENTITY='+argument(s.identity,'signing identity'));}
+ if(s.allowUpdates)args.push('-allowProvisioningUpdates');return args;
+}
+export function archivePlan(s:AppleSelection,signing:AppleSigning,path:string):{tasks:Task[]}{
+ if(!s.scheme||!s.destination||/Simulator/.test(s.destination))throw new Error('Archiving requires a scheme and a macOS or generic device destination.');
+ if(signing.style==='unsigned')throw new Error('Choose project, automatic or manual signing for an archive.');
+ if(!applePath(path).endsWith('.xcarchive'))throw new Error('Archive path must end in .xcarchive.');
+ return {tasks:[{command:'/bin/mkdir',args:['-p',path.slice(0,path.lastIndexOf('/'))||'.']},{command:'/usr/bin/xcodebuild',args:[...xcodeArguments(s),...signingArguments(signing),'-archivePath',path,'archive'],timeoutSeconds:3600}]};
+}
+export function exportPlan(archive:string,options:string,output:string,allowUpdates:boolean):{tasks:Task[]}{
+ if(!applePath(archive).endsWith('.xcarchive')||!applePath(options).endsWith('.plist'))throw new Error('Choose an archive and export options plist.');applePath(output);
+ return {tasks:[{command:'/usr/bin/xcodebuild',args:['-exportArchive','-archivePath',archive,'-exportOptionsPlist',options,'-exportPath',output,...(allowUpdates?['-allowProvisioningUpdates']:[])],timeoutSeconds:3600}]};
+}
+export const exportMethods=['debugging','release-testing','app-store-connect','developer-id','mac-application','enterprise'] as const;
+export function exportOptions(method:string,signing:AppleSigning,profiles:Record<string,string>):string{
+ if(!(exportMethods as readonly string[]).includes(method))throw new Error('Choose an export method.');signingArguments(signing);
+ if(signing.style==='unsigned')throw new Error('Exports require signing.');
+ const xml=(s:string)=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+ const pair=(key:string,value:string)=>'<key>'+key+'</key><string>'+xml(value)+'</string>';
+ let body=pair('method',method)+pair('destination','export')+pair('signingStyle',signing.style==='manual'?'manual':'automatic');
+ if(signing.team)body+=pair('teamID',signing.team);
+ if(signing.style==='manual'){
+  if(!Object.keys(profiles).length)throw new Error('Supply provisioning profiles for the app and any extensions.');
+  for(const [bundle,profile] of Object.entries(profiles))if(!/^[\w-]+(?:\.[\w-]+)+$/.test(bundle)||typeof profile!=='string'||!profile.trim())throw new Error('Invalid provisioning profile mapping.');
+  body+='<key>provisioningProfiles</key><dict>'+Object.entries(profiles).map(([key,value])=>pair(xml(key),value)).join('')+'</dict>';
+  if(signing.identity)body+=pair('signingCertificate',signing.identity);
+ }
+ return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>'+body+'</dict></plist>\n';
 }
