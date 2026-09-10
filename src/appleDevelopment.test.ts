@@ -55,3 +55,8 @@ test('signing provisioning and export settings are explicit and escaped',()=>{
  assert.ok(plist.includes('A &amp; B'));assert.ok(plist.includes('<string>export</string>'));assert.ok(!plist.includes('<string>upload</string>'));
  assert.throws(()=>signingArguments({...defaultSigning,team:'bad'}),/Team ID/);
 });
+import {buildServerPlan} from './appleDevelopment.ts';
+test('Xcode build-server setup preserves workspace and scheme arguments',()=>{
+ assert.deepEqual(buildServerPlan({...selection,project:'App Space.xcworkspace'}).tasks[0].args,['config','-workspace','App Space.xcworkspace','-scheme','My App']);
+ assert.throws(()=>buildServerPlan({...selection,project:'Package.swift'}),/do not need/);
+});

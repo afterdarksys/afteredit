@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { serverPresets, type ServerConfig, type ConnectedServer } from './languageServices';
-export default function LanguagePanel({root,configured,connected,onChange}:{root:string;configured:Record<string,ServerConfig>;connected:ConnectedServer[];onChange:(servers:ConnectedServer[])=>void}){
- const [language,setLanguage]=useState('rust'),[draft,setDraft]=useState(JSON.stringify(configured.rust??serverPresets.rust,null,2)),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
+export default function LanguagePanel({root,configured,connected,onChange,initialLanguage='rust'}:{initialLanguage?:string;root:string;configured:Record<string,ServerConfig>;connected:ConnectedServer[];onChange:(servers:ConnectedServer[])=>void}){
+ const [language,setLanguage]=useState(initialLanguage),[draft,setDraft]=useState(JSON.stringify(configured[initialLanguage]??serverPresets[initialLanguage],null,2)),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
  async function connect(){setBusy(true);let id:number|undefined;try{
   const options:ServerConfig=JSON.parse(draft);if(typeof options.command!=='string'||!Array.isArray(options.args)||!options.args.every(a=>typeof a==='string'))throw new Error('Supply a command and argument array');
   const started=await invoke<{id:number;root_uri:string}>('lsp_start',{root,command:options.command,args:options.args,env:options.env??{}});id=started.id;

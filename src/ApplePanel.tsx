@@ -5,9 +5,9 @@ import type {Task} from './workflows';
 import type {InfrastructureDiagnostic} from './infrastructure';
 import {useEffect,useRef,useState} from 'react';
 import {invoke,isTauri} from '@tauri-apps/api/core';
-import {defaultSigning,archivePlan,exportPlan,exportOptions,exportMethods,type AppleSigning,appleDebug,appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
+import {buildServerPlan,defaultSigning,archivePlan,exportPlan,exportOptions,exportMethods,type AppleSigning,appleDebug,appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
 type Tool={name:string;available:boolean;detail:string};
-export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug}:{onDebug:(config:DebugConfig)=>void;root:string;dirty:boolean;onOpen:(path:string,line:number)=>void;onProblems:(problems:InfrastructureDiagnostic[])=>void}){
+export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug,active,onLanguage}:{active:string;onLanguage:(project:string)=>void;onDebug:(config:DebugConfig)=>void;root:string;dirty:boolean;onOpen:(path:string,line:number)=>void;onProblems:(problems:InfrastructureDiagnostic[])=>void}){
  const [tools,setTools]=useState<Tool[]>([]),[projects,setProjects]=useState<string[]>([]),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
  const [selection,setSelection]=useState<AppleSelection>({project:'',scheme:'',target:'',configuration:'Debug',destination:''}),[metadata,setMetadata]=useState<AppleMetadata>({schemes:[],targets:[],configurations:[]}),[destinations,setDestinations]=useState<AppleDestination[]>([]),[trusted,setTrusted]=useState(false);
  const change=(patch:Partial<AppleSelection>)=>{setSelection(s=>({...s,...patch}));setTrusted(false);setPlan(null);};
@@ -25,6 +25,7 @@ export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug}:{onDeb
  function prepareArchive(){try{setPlan(archivePlan(selection,signing,archive));setStatus('Review archive commands. Existing archive paths may be replaced by Xcode.');}catch(e){setStatus(String(e));}}
  function prepareExport(){try{setPlan(exportPlan(archive,optionsPath,exportPath,signing.allowUpdates));setStatus('Review export commands and the selected plist.');}catch(e){setStatus(String(e));}}
  async function saveOptions(){try{const path=await invoke<string|null>('save_as',{content:plist});if(path?.startsWith(root+'/')){setOptionsPath(path.slice(root.length+1));setPlan(null);setStatus('Export options saved.');}else if(path)setStatus('Saved outside the project. Save a copy inside the project to use it here.');}catch(e){setStatus(String(e));}}
+ async function openXcode(path:string){setBusy(true);try{await invoke('apple_open',{root,path,project:selection.project,line:1});setStatus('Opened in Xcode.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
  const running=useRef(false),cancelled=useRef(false);
  useEffect(()=>()=>{cancelled.current=true;},[]);
  function prepare(action:'build'|'test'){try{setPlan(appleBuild(selection,action,Date.now().toString(36),signing));setStatus('Review the commands, then run.');}catch(e){setStatus(String(e));}}
@@ -66,6 +67,12 @@ export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug}:{onDeb
  <label>Export provisioning profiles JSON (bundle ID to profile)<textarea disabled={busy} value={profiles} onChange={e=>{setProfiles(e.target.value);setPlist('');}}/></label>
  <button disabled={busy} onClick={()=>{try{const mapping=JSON.parse(profiles);if(!mapping||Array.isArray(mapping)||typeof mapping!=='object')throw new Error('Profiles must be a JSON object.');setPlist(exportOptions(method,signing,mapping));}catch(e){setStatus(String(e));}}}>Generate export options</button>{plist&&<><pre tabIndex={0} aria-label="Generated export options">{plist}</pre><button disabled={busy||!isTauri()} onClick={()=>void saveOptions()}>Save export options as new file</button></>}
  <label>Export options plist relative to project<input disabled={busy} value={optionsPath} onChange={e=>{setOptionsPath(e.target.value);setPlan(null);}}/></label><label>Export directory relative to project<input disabled={busy} value={exportPath} onChange={e=>{setExportPath(e.target.value);setPlan(null);}}/></label><button disabled={busy||!trusted||dirty} onClick={prepareExport}>Prepare export</button>
+ <h2>Xcode editors and language context</h2><p>SwiftUI Canvas previews, storyboards, XIBs, asset catalogs, signing capabilities and account management open in Xcode. Save edits before opening the same file there.</p>
+ <button disabled={busy||!selection.project||dirty} onClick={()=>void openXcode(selection.project)}>Open project in Xcode</button>
+ <button disabled={busy||!selection.project||dirty||!active.startsWith(root+'/')} onClick={()=>void openXcode(active.slice(root.length+1))}>Open current file for previews or Interface Builder</button>
+ <button disabled={busy} onClick={()=>onLanguage(selection.project)}>Configure SourceKit-LSP</button>
+ <p>Swift packages need no extra build server. For Xcode projects, install xcode-build-server separately. Its configuration command creates or updates buildServer.json in the selected project root. Build in Xcode to populate its build settings, then connect SourceKit-LSP at that same root.</p>
+ <button disabled={busy||!trusted||!selection.scheme} onClick={()=>{try{setPlan(buildServerPlan(selection));setStatus('Review the build-server configuration command.');}catch(e){setStatus(String(e));}}}>Prepare Xcode build-server configuration</button>
  <h2>Build and test</h2><p>Builds and tests can execute project scripts and package plugins. Save modified files first.</p>
  <button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('build')}>Prepare build</button><button disabled={busy||!trusted||!selection.project||dirty} onClick={()=>prepare('test')}>Prepare tests</button>
  {dirty&&<p>Save modified project files before running Apple commands.</p>}

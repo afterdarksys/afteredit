@@ -91,3 +91,12 @@ pub async fn apple_query(workspace:tauri::State<'_,crate::workspace::WorkspaceSt
  let root=crate::workspace::allowed(&workspace,Path::new(&root))?;
  tauri::async_runtime::spawn_blocking(move||self::query(&root,query)).await.map_err(|e|e.to_string())?
 }
+
+#[tauri::command]
+pub async fn apple_open(workspace:tauri::State<'_,crate::workspace::WorkspaceState>,root:String,path:String,project:String,line:u32)->Result<(),String>{
+ let root=crate::workspace::allowed(&workspace,Path::new(&root))?;
+ let target=within(&root,&path)?;let container=within(&root,&project)?;
+ tauri::async_runtime::spawn_blocking(move||{
+  run(&root,"/usr/bin/xcrun",&["xed","--project",&container.to_string_lossy(),"--line",&line.max(1).to_string(),&target.to_string_lossy()])?;Ok(())
+ }).await.map_err(|e|e.to_string())?
+}
