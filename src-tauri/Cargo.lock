@@ -13,6 +13,8 @@ name = "afteredit"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "futures-channel",
+ "futures-util",
  "libc",
  "portable-pty",
  "reqwest",

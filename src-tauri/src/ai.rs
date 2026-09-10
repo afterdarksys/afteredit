@@ -1,16 +1,53 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
-    sync::Mutex,
+    sync::{Mutex, Arc},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Manager,Emitter};
 #[derive(Default)]
-pub struct AiState(Mutex<()>);
+pub struct AiState(Mutex<()>, Arc<Mutex<HashMap<String,futures_channel::oneshot::Sender<()>>>>, Mutex<HashSet<String>>);
+struct RequestGuard {id:String,requests:Arc<Mutex<HashMap<String,futures_channel::oneshot::Sender<()>>>>}
+impl Drop for RequestGuard {fn drop(&mut self){if let Ok(mut requests)=self.requests.lock(){requests.remove(&self.id);}}}
+#[derive(Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+struct Delta {request_id:String,text:String}
+#[tauri::command]
+pub fn cancel_ai(state:tauri::State<'_,AiState>,request_id:String)->Result<(),String>{
+ if request_id.is_empty()||request_id.len()>128{return Err("Invalid request ID".into());}
+ let mut requests=state.1.lock().map_err(err)?;
+ if let Some(sender)=requests.remove(&request_id){let _=sender.send(());}
+ else {let mut cancelled=state.2.lock().map_err(err)?;if cancelled.len()<64{cancelled.insert(request_id);}}
+ Ok(())
+}
+#[tauri::command]
+pub async fn ask_ai(app:tauri::AppHandle,state:tauri::State<'_,AiState>,request:Request)->Result<Reply,String>{
+ let id=request.request_id.clone().unwrap_or_else(||format!("legacy-{:?}",SystemTime::now()));
+ if id.is_empty()||id.len()>128{return Err("Invalid request ID".into());}
+ let (sender,receiver)=futures_channel::oneshot::channel();
+ {
+  let mut requests=state.1.lock().map_err(err)?;
+  if state.2.lock().map_err(err)?.remove(&id){return Err("AI request cancelled before sending.".into());}
+  if requests.len()>=8 || requests.contains_key(&id){return Err("Too many or duplicate AI requests.".into());}
+  requests.insert(id.clone(),sender);
+ }
+ let _guard=RequestGuard{id,requests:state.1.clone()};
+ cancelable(ask_inner(app,state,request),receiver).await
+}
+async fn cancelable<T>(future:impl std::future::Future<Output=Result<T,String>>,receiver:futures_channel::oneshot::Receiver<()>)->Result<T,String>{
+ use futures_util::future::{select,Either};
+ match select(Box::pin(future),receiver).await {
+  Either::Left((result,_))=>result,
+  Either::Right(_)=>Err("AI request cancelled; any usage reservation is retained.".into()),
+ }
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {
+    request_id: Option<String>,
+    #[serde(default)]
+    stream: bool,
     endpoint: String,
     key: String,
     model: String,
@@ -74,8 +111,7 @@ fn reserve(
     ledger.requests += 1;
     Ok(())
 }
-#[tauri::command]
-pub async fn ask_ai(
+async fn ask_inner(
     app: tauri::AppHandle,
     state: tauri::State<'_, AiState>,
     request: Request,
@@ -164,7 +200,7 @@ pub async fn ask_ai(
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(err)?;
-    let body = provider_body(
+    let mut body = provider_body(
         protocol,
         token_parameter,
         &request.model,
@@ -172,6 +208,7 @@ pub async fn ask_ai(
         &user,
         request.max_tokens,
     );
+    body["stream"]=request.stream.into();
     let mut send = client.post(url).json(&body);
     if protocol == "anthropic" {
         send = send
@@ -190,20 +227,25 @@ pub async fn ask_ai(
             response.status().as_u16()
         ));
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| "AI response interrupted; reservation retained".to_string())?
-    {
-        if bytes.len() + chunk.len() > 2_000_000 {
-            return Err("AI response exceeds 2 MB".into());
-        }
-        bytes.extend_from_slice(&chunk);
+    let event_stream=request.stream && response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|h|h.to_str().ok()).is_some_and(|value|value.starts_with("text/event-stream"));
+    let mut bytes=Vec::new();let mut text=String::new();let mut decoder=crate::ai_stream::StreamDecoder::default();let mut received=0usize;
+    while let Some(chunk)=response.chunk().await.map_err(|_|"AI response interrupted; reservation retained".to_string())? {
+        received+=chunk.len();if received>2_000_000{return Err("AI response exceeds 2 MB".into());}
+        if event_stream {
+            for delta in decoder.push(&chunk,protocol)? {
+                text.push_str(&delta);
+                if let Some(id)=&request.request_id {let _=app.emit("ai:chunk",Delta{request_id:id.clone(),text:delta});}
+            }
+            if decoder.done{break;}
+        }else{bytes.extend_from_slice(&chunk);}
     }
-    let json: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| "Provider returned invalid JSON".to_string())?;
-    let text = response_text(protocol, &json)?;
+    if event_stream {
+        if !decoder.done{return Err("AI stream ended before completion; partial output is retained.".into());}
+        if text.is_empty(){return Err("Provider did not return text".into());}
+    }else{
+        let json:serde_json::Value=serde_json::from_slice(&bytes).map_err(|_|"Provider returned invalid JSON".to_string())?;
+        text=response_text(protocol,&json)?;
+    }
     Ok(Reply {
         text,
         reserved_units,
@@ -346,4 +388,18 @@ mod agent_tests {
             "hello"
         );
     }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+ use super::*;
+ #[test]fn cancellation_drops_the_inflight_future(){
+  struct ObserveDrop(Arc<std::sync::atomic::AtomicBool>);
+  impl Drop for ObserveDrop{fn drop(&mut self){self.0.store(true,std::sync::atomic::Ordering::SeqCst);}}
+  let dropped=Arc::new(std::sync::atomic::AtomicBool::new(false));let guard=ObserveDrop(dropped.clone());
+  let (send,receive)=futures_channel::oneshot::channel();send.send(()).unwrap();
+  let future=async move {let _guard=guard;std::future::pending::<Result<(),String>>().await};
+  assert!(tauri::async_runtime::block_on(cancelable(future,receive)).unwrap_err().contains("cancelled"));
+  assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+ }
 }

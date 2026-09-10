@@ -4,12 +4,12 @@ import {agentInstructions,parseAction,type AgentAction} from './agent';
 import {taskOrder,type Task} from './workflows';
 export type RunBudget={id:string;maxRequests:number;maxUnits:number};
 type Run={budget:RunBudget;steps:number;goal:string;context:string;transcript:string;stopped:boolean;autoRead:boolean;ask:Props['ask'];read:Props['onRead'];edit:Props['onEdit'];task:Props['onTask'];tasks:Record<string,Task>};
-type Props={root:string;context:string;tasks:Record<string,Task>;ask:(prompt:string,context:string,budget:RunBudget)=>Promise<string>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>};
+type Props={onCancelRequest?:()=>void;root:string;context:string;tasks:Record<string,Task>;ask:(prompt:string,context:string,budget:RunBudget)=>Promise<string>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>};
 export default function AgentPanel(props:Props){
  const [goal,setGoal]=useState(''),[maxSteps,setMaxSteps]=useState(8),[maxUnits,setMaxUnits]=useState(50000),[autoRead,setAutoRead]=useState(false);
  const [busy,setBusy]=useState(false),[active,setActive]=useState(false),[status,setStatus]=useState(''),[log,setLog]=useState('');
  const [pending,setPending]=useState<{run:Run;action:AgentAction}|null>(null);const current=useRef<Run|null>(null),taskRunning=useRef(false);const stopTask=useRef(props.onStopTask);stopTask.current=props.onStopTask;
- const stop=()=>{if(current.current)current.current.stopped=true;setPending(null);setActive(false);setStatus('Stopped; an in-flight provider request may still finish and remains charged.');if(taskRunning.current)stopTask.current();};
+ const stop=()=>{props.onCancelRequest?.();if(current.current)current.current.stopped=true;setPending(null);setActive(false);setStatus('Stopped; an in-flight provider request may still finish and remains charged.');if(taskRunning.current)stopTask.current();};
  useEffect(()=>()=>{if(current.current)current.current.stopped=true;if(taskRunning.current)stopTask.current();},[props.root]);
  const reviewHeading=useRef<HTMLHeadingElement>(null);
  useEffect(()=>{if(pending)reviewHeading.current?.focus();},[pending]);

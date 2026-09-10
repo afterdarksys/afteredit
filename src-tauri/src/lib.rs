@@ -1,4 +1,5 @@
 mod ai;
+mod ai_stream;
 mod dap;
 mod lsp;
 mod registry;
@@ -47,7 +48,7 @@ pub fn run() {
             registry::registry_search, registry::registry_download,
             lsp::lsp_start,lsp::lsp_request,lsp::lsp_notify,lsp::lsp_stop,
             dap::dap_start,dap::dap_request,dap::dap_stop,
-            ai::ask_ai
+            ai::ask_ai, ai::cancel_ai
         ])
         .build(tauri::generate_context!())
         .expect("error while building AfterEdit")
