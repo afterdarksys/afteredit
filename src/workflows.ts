@@ -72,6 +72,7 @@ export function matches(pattern: string, path: string): boolean {
 }
 export const presets: Record<string, Record<string, Task>> = {
   ...infrastructureTasks,
+  'Swift Package':{build:{command:'/usr/bin/xcrun',args:['swift','build']},test:{command:'/usr/bin/xcrun',args:['swift','test']}},
   'Rust / Cargo': { build: { command: 'cargo', args: ['build'] }, test: { command: 'cargo', args: ['test'] } },
   Go: { build: { command: 'go', args: ['build', './...'] }, test: { command: 'go', args: ['test', './...'] } },
   'C / C++ / CMake': { configure: { command: 'cmake', args: ['-S', '.', '-B', 'build'] }, build: { command: 'cmake', args: ['--build', 'build'], dependsOn: ['configure'] }, test: { command: 'ctest', args: ['--test-dir', 'build'], dependsOn: ['build'] } },
