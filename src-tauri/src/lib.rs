@@ -7,6 +7,8 @@ mod pty;
 mod tasks;
 mod workspace;
 mod session;
+mod process;
+mod git;
 
 use pty::PtyState;
 use tauri::{Manager, RunEvent};
@@ -27,6 +29,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
+            git::git_status, git::git_diff,
             session::restore_session, session::save_session,
             workspace::choose_path,
             workspace::list_directory,

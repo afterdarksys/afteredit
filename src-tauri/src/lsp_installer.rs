@@ -71,7 +71,7 @@ pub(crate) fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn resolve_binary(name: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_binary(name: &str) -> Option<PathBuf> {
     search_dirs()
         .into_iter()
         .map(|dir| dir.join(name))
