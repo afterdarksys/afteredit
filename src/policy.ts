@@ -56,3 +56,13 @@ export function summarize(report: PolicyReport): string {
   const tail = report.unlocated ? `, ${report.unlocated} without a source line` : '';
   return parts.join(', ') + tail;
 }
+
+/** A possible credential. Carries a location and a rule id -- never the value. */
+export type SecretFinding = {
+  rule: string;
+  description: string;
+  file: string;
+  start_line: number;
+  fingerprint: string | null;
+  detector: 'gitleaks' | 'builtin';
+};

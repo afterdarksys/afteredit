@@ -114,6 +114,10 @@ pub async fn git_review_staged(state:tauri::State<'_,WorkspaceState>,root:String
 fn commit_snapshot(root:&Path,message:&str,tree:&str)->Result<String,String>{
  use std::io::Write;
  if message.trim().is_empty() || message.len()>10000{return Err("Enter a commit message of 1–10,000 bytes.".into());}
+ // Fail closed: a scan that cannot complete blocks the commit rather than
+ // waving it through. Locations only -- never the secret itself.
+ let scan=crate::secrets::scan_staged(root)?;
+ if !scan.findings.is_empty(){return Err(crate::secrets::refusal(&scan));}
  let index_path=success(git(root,&["rev-parse","--git-path","index"])?)?;
  let index_path=root.join(index_path.trim_end());
  let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_nanos();
@@ -137,6 +141,32 @@ pub async fn git_commit(state:tauri::State<'_,WorkspaceState>,root:String,messag
 #[cfg(test)]
 mod mutation_tests{
  use super::*;
+ /// The secrets gate, on the real commit path: a staged credential must stop
+ /// the commit, and the refusal must not repeat the credential back.
+ #[test]fn commit_refuses_when_a_secret_is_staged(){
+  let dir=std::env::temp_dir().join(format!("afteredit-git-secret-{}",std::process::id()));
+  let _=std::fs::remove_dir_all(&dir);std::fs::create_dir_all(&dir).unwrap();
+  for args in [vec!["init"],vec!["config","user.name","AfterEdit Test"],vec!["config","user.email","test@example.invalid"],vec!["config","commit.gpgsign","false"]]{success(git(&dir,&args).unwrap()).unwrap();}
+
+  std::fs::write(dir.join("config.ini"),"aws_access_key_id = AKIA4NPQ2XZJ7KLMWVR3\n").unwrap();
+  success(git(&dir,&["add","--","config.ini"]).unwrap()).unwrap();
+  let tree=success(git(&dir,&["write-tree"]).unwrap()).unwrap();
+
+  let refused=commit_snapshot(&dir,"add config",tree.trim()).unwrap_err();
+  assert!(refused.starts_with("Commit blocked"),"{refused}");
+  assert!(!refused.contains("AKIA4NPQ2XZJ7KLMWVR3"),"refusal repeated the secret: {refused}");
+  // Nothing was committed.
+  assert!(git(&dir,&["rev-parse","HEAD"]).unwrap().code!=0,"a commit was created despite the block");
+
+  // Remove the credential and the same commit goes through.
+  std::fs::write(dir.join("config.ini"),"aws_access_key_id = ${AWS_ACCESS_KEY_ID}\n").unwrap();
+  success(git(&dir,&["add","--","config.ini"]).unwrap()).unwrap();
+  let clean=success(git(&dir,&["write-tree"]).unwrap()).unwrap();
+  commit_snapshot(&dir,"add config",clean.trim()).expect("clean tree should commit");
+  assert_eq!(git(&dir,&["rev-parse","HEAD"]).unwrap().code,0);
+
+  let _=std::fs::remove_dir_all(&dir);
+ }
  #[test]fn commit_rejects_stale_review_and_preserves_working_tree(){
   let dir=std::env::temp_dir().join(format!("afteredit-git-write-{}",std::process::id()));std::fs::create_dir_all(&dir).unwrap();
   for args in [vec!["init"],vec!["config","user.name","AfterEdit Test"],vec!["config","user.email","test@example.invalid"],vec!["config","commit.gpgsign","false"]]{success(git(&dir,&args).unwrap()).unwrap();}
