@@ -34,3 +34,30 @@ request authentication/token fields, SSE text delivery, JSON fallback, HTTP erro
 malformed/incomplete responses, and socket closure on cancellation. No paid API
 keys are used. These checks validate transport behavior, not provider availability
 or model quality; ledger reservation tests run alongside them.
+
+## Infrastructure
+
+`npm run test:infrastructure` runs temporary local fixtures. Terraform and OpenTofu
+must reject a missing variable with source diagnostics. Ansible must accept the
+valid playbook and reject malformed YAML with its filename. Optional TFLint and
+ansible-lint checks require JSON diagnostics and a recognized exit status; an
+installed tool with a failing version check fails the suite. Ansibug is probed
+for its installed module version only, not a live attach session.
+
+On 2026-09-10 Terraform, OpenTofu and both Ansible syntax cases passed. TFLint,
+ansible-lint and Ansibug were absent and explicitly skipped. The process-runner
+tests cover stderr isolation, missing versus failing executables, output bounds
+and timeout termination. They run as part of `npm test`.
+
+## Native observation limits
+
+This pass ran on macOS 15.7.4 (24G508). Both
+`AXIsProcessTrusted()` and `CGPreflightScreenCaptureAccess()` returned false.
+A launched process is therefore only a startup/liveness observation in this
+session; native rendering, file/Git/terminal interactions and VoiceOver remain
+hands-on checks. The original affected-installation blank-window report is not
+confirmed resolved.
+
+The final macOS `.app` bundle built successfully and its packaged executable
+remained running more than 30 seconds after launch. The app was left open for
+visual inspection. This does not establish that its webview rendered correctly.

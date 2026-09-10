@@ -404,13 +404,11 @@ errors from provider-free fixtures; a localhost Ansible playbook passed syntax
 checking. TFLint, ansible-lint and Ansibug are not installed here, so their integrations
 have parser/preset coverage but no live tool run.
 
-LLDB answered initialize, but the opt-in target-launch test timed out waiting for
-initialized. Breakpoint/stack/variable/step execution is therefore **not verified**
-on this machine. macOS developer mode was disabled; enabling it required admin
-authentication, which did not complete. The OS reported cancellation, but no user
-action was observed. That setting was not changed.
-The packaged debugger and infrastructure UI still need hands-on verification. Treat native debugging as a preview pending those
-checks; the unit suite is not a substitute for a passing debugger launch test.
+The release-hardening pass subsequently passed the live LLDB launch test on this
+host: source breakpoint, stack, variable value, expression evaluation, stepping
+and normal termination. No developer-mode setting was changed during that pass.
+The packaged debugger and infrastructure UI still need hands-on verification.
+See [release checks](RELEASE-CHECKS.md) for current commands and evidence.
 
 ## Accessibility
 
@@ -472,3 +470,12 @@ Batch results: **58 frontend unit tests, 19 native tests, 11 workbench browser t
 and 3 production extension tests passed**. The production build passed. Two existing
 native integration tests were skipped by default. Live Terraform/OpenTofu validation
 and Ansible syntax checks passed; TFLint, ansible-lint and Ansibug were unavailable.
+
+
+Release-hardening results: **63 frontend/process tests, 22 native tests, 12
+workbench browser tests and 5 production smoke tests passed**. The live LLDB
+integration test passed separately. AI tests now use local HTTP servers to verify
+both provider protocols and cancellation closing a connection. Run
+`npm run test:release` and `npm run test:infrastructure` for the added release
+checks. Native screen-reader verification remains open because this automation
+session lacks macOS Accessibility access. See [RELEASE-CHECKS.md](RELEASE-CHECKS.md).
