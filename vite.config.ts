@@ -7,6 +7,11 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
+  // Adapters published against Monaco's pre-0.53 deep paths share our bundled instance.
+  resolve: { alias: [
+    { find: /^monaco-vim$/, replacement: new URL('./node_modules/monaco-vim/dist/index.mjs', import.meta.url).pathname },
+    { find: /^monaco-editor\/esm\/vs\/(.*)$/, replacement: 'monaco-editor/$1' },
+  ] },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

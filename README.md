@@ -138,3 +138,18 @@ and extension hosting are future work.
 
 The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
 it as `$EDITOR` yet.
+
+## Personal preferences and legacy keymaps
+
+Settings now includes searchable editor preferences and JSON import/export. Personal
+settings sit beneath root/directory overrides. Preferences include font family,
+size and ligatures, line height, indentation, wrapping, relative line numbers,
+minimap, whitespace, cursor style/blinking, folding, bracket colors, sticky scroll,
+smooth scrolling and save cleanup. Built-in light/dark and high-contrast themes
+are available. Choose `standard`, `vim` or `emacs` under keymap.
+
+Vim uses monaco-vim (normal/insert/visual modes, motions, search, :w); Emacs uses
+monaco-emacs (navigation, mark, kill/yank, C-x C-s). Adapters load only when selected
+and dispose on mode/view changes. These are editor keymaps, not embedded Vim/Emacs
+runtimes: vimrc, Emacs Lisp and arbitrary editor plugins are not supported.
+The Commands button provides access even when a legacy binding takes a shortcut.

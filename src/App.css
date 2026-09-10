@@ -229,3 +229,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .status-bar span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .command-palette .cp-item { width: 100%; text-align: left; }
 @media (max-width: 850px) { .sidebar { width: 190px; } .workbench-page { padding: 18px; } }
+.preference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 20px; }
+.editor-host { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+.editor-surface { flex: 1; min-height: 0; }
+.keymap-status { flex-shrink: 0; min-height: 22px; padding: 2px 12px; background: #252b33; color: #b9dfff; font: 12px monospace; }

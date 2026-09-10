@@ -7,6 +7,8 @@ import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
+import PreferencesPanel from './PreferencesPanel';
+import { editorDefaults, validateEditor, savedText } from './preferences';
 import { usePersistedState } from './usePersistedState';
 import { defaults, matches, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
 const CodeEditor = lazy(() => import('./CodeEditor'));
@@ -16,6 +18,8 @@ type View = 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions';
 const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
+  const [personalJSON, setPersonalJSON] = usePersistedState('editor.preferences.v1', '{}');
+  const personal = (() => { try { return {...editorDefaults,...validateEditor(JSON.parse(personalJSON))}; } catch { return editorDefaults; } })();
   const [theme, setTheme] = usePersistedState('pref.osTheme', 'mac');
   const [layout, setLayout] = usePersistedState('pref.layout', 'stacked');
   const [scratch, setScratch] = usePersistedState('scratch.v2', '// Welcome to AfterEdit. Open a file or a project to begin.\n');
@@ -54,14 +58,14 @@ function App() {
   }, [theme]);
   useEffect(() => {
     let stale = false;
-    if (!activeRoot || !scope) { setConfig(defaults); setLayers([]); setConfigError(''); return; }
+    if (!activeRoot || !scope) { setConfig(resolveConfig([{editor:personal}])); setLayers([]); setConfigError(''); return; }
     setConfigError('Loading configuration…');
     invoke<Array<{ path: string; value: unknown }>>('project_config', { root: activeRoot, directory: scope }).then(result => {
       if (stale) return;
-      setConfig(resolveConfig(result.map(l => l.value))); setLayers(result.map(l => l.path)); setConfigError('');
+      setConfig(resolveConfig([{editor:personal}, ...result.map(l => l.value)])); setLayers(result.map(l => l.path)); setConfigError('');
     }).catch(e => { if (!stale) { setConfig(defaults); setConfigError(String(e)); } });
     return () => { stale = true; };
-  }, [activeRoot, scope, revision]);
+  }, [activeRoot, scope, revision, personalJSON]);
   useEffect(() => { setTrusted(false); setPendingTasks([]); }, [activeRoot, scope, revision]);
   useEffect(() => {
     if (!isTauri()) return;
@@ -125,7 +129,8 @@ function App() {
   }
   async function save() {
     if (!activeBuffer) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
-    const snapshot = activeBuffer.value, path = active;
+    const snapshot = savedText(activeBuffer.value, config.editor), path = active;
+    if (snapshot !== activeBuffer.value) update(snapshot);
     try {
       await invoke('save_file', { path, content: snapshot, expected: activeBuffer.saved });
       setBuffers(b => ({ ...b, [path]: { ...b[path], saved: snapshot } }));
@@ -164,7 +169,8 @@ function App() {
   ];
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); void save(); }
+      if (e.defaultPrevented) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setPalette(p => !p); }
       if (e.key === 'Escape') setPalette(false);
@@ -189,11 +195,11 @@ function App() {
         <main className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} /></Suspense></ErrorBoundary>}
+            {view === 'editor' && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}><CodeEditor path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} onSave={() => void save()} /></Suspense></ErrorBoundary>}
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
             {view === 'ai' && <AiPanel context={value} instructions={config.instructions} />}
             {view === 'extensions' && <section className="workbench-page"><h1>Extensions</h1><p>AfterEdit bundles Monaco language tokenizers and developer tools. VS Code extensions and VSIX packages are not currently supported.</p><p>Running VS Code extensions requires a compatible extension host and APIs. Open VSX is a candidate registry for that integration; registry access alone does not make extensions work.</p><p>Microsoft's Marketplace is not a general-purpose registry for third-party editors. No Marketplace endpoint is configured.</p></section>}
-            {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
+            {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
               <h2>Project and directory overrides</h2><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>
               {layers.map(path => <button key={path} onClick={() => void openFile(path).catch(report)}>{path}</button>)}<p role="alert">{configError}</p><h2>Effective settings</h2><pre>{JSON.stringify(config, null, 2)}</pre>
             </section>}

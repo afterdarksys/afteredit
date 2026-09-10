@@ -1,7 +1,8 @@
+import { editorDefaults, validateEditor, type EditorPreferences } from './preferences.ts';
 export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[] };
 export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[] };
-export type ProjectConfig = { editor: { fontSize: number; tabSize: number; wordWrap: 'on' | 'off' }; tasks: Record<string, Task>; rules: Rule[]; instructions: string };
-export const defaults: ProjectConfig = { editor: { fontSize: 14, tabSize: 2, wordWrap: 'off' }, tasks: {}, rules: [], instructions: '' };
+export type ProjectConfig = { editor: EditorPreferences; tasks: Record<string, Task>; rules: Rule[]; instructions: string };
+export const defaults: ProjectConfig = { editor: editorDefaults, tasks: {}, rules: [], instructions: '' };
 function record(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 function strings(v: unknown): v is string[] { return Array.isArray(v) && v.every(x => typeof x === 'string'); }
 export function resolveConfig(layers: unknown[]): ProjectConfig {
@@ -9,12 +10,7 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
   for (const layer of layers) {
     if (!record(layer)) throw new Error('Configuration must be an object');
     if (layer.editor !== undefined) {
-      if (!record(layer.editor)) throw new Error('editor must be an object');
-      const e = layer.editor;
-      if (e.fontSize !== undefined && (typeof e.fontSize !== 'number' || !Number.isFinite(e.fontSize) || e.fontSize < 8 || e.fontSize > 48)) throw new Error('fontSize must be 8–48');
-      if (e.tabSize !== undefined && (!Number.isInteger(e.tabSize) || Number(e.tabSize) < 1 || Number(e.tabSize) > 8)) throw new Error('tabSize must be 1–8');
-      if (e.wordWrap !== undefined && e.wordWrap !== 'on' && e.wordWrap !== 'off') throw new Error('wordWrap must be on or off');
-      result.editor = { ...result.editor, ...e };
+      result.editor = { ...result.editor, ...validateEditor(layer.editor) };
     }
     if (layer.tasks !== undefined) {
       if (!record(layer.tasks)) throw new Error('tasks must be an object');
