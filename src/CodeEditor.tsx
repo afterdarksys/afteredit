@@ -1,3 +1,5 @@
+import { useAccessibility } from './AccessibilityContext';
+import { accessibleEditorOptions, accessibleEditorTheme } from './accessibility';
 import type { InfrastructureDiagnostic } from './infrastructure';
 import { shellClosingBlock } from './smartEditing';
 import type { Breakpoint } from './debugging';
@@ -13,6 +15,7 @@ import type { editor } from 'monaco-editor';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
 export default function CodeEditor({ infrastructureDiagnostics, breakpoints, onToggleBreakpoint, debugLocation, path, value, onChange, options, onSave, extensions, revealLine, servers, onNavigate, onError }: { infrastructureDiagnostics:InfrastructureDiagnostic[]; breakpoints:Breakpoint[]; onToggleBreakpoint:(path:string,line:number)=>void; debugLocation?:{path:string;line:number}; path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; revealLine: number; servers: ConnectedServer[]; onNavigate:(path:string,line:number)=>void; onError:(text:string)=>void }) {
+  const accessibility = useAccessibility();
   const [instance, setInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
   useEffect(()=>{const model=instance?.getModel();if(!model)return;monaco.editor.setModelMarkers(model,'infrastructure',infrastructureDiagnostics.filter(d=>d.path===path).map(d=>({message:d.message,source:d.source,startLineNumber:d.line,startColumn:d.column,endLineNumber:d.line,endColumn:d.column+1,severity:d.severity==='error'?monaco.MarkerSeverity.Error:d.severity==='warning'?monaco.MarkerSeverity.Warning:monaco.MarkerSeverity.Info})));const changed=model.onDidChangeContent(()=>monaco.editor.setModelMarkers(model,'infrastructure',[]));return()=>{changed.dispose();monaco.editor.setModelMarkers(model,'infrastructure',[]);};},[instance,path,infrastructureDiagnostics]);
   const toggleBreakpoint=useRef(onToggleBreakpoint);toggleBreakpoint.current=onToggleBreakpoint;
@@ -55,5 +58,5 @@ export default function CodeEditor({ infrastructureDiagnostics, breakpoints, onT
     void attach().catch(e=>{if(!disposed) node.textContent = `Keymap could not load: ${String(e)}. Standard bindings remain available.`;});
     return ()=>{disposed=true;adapter?.dispose();node.textContent='';};
   },[instance,options.keymap]);
-  return <div className="editor-host"><div className="editor-surface"><Editor height="100%" theme={['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark'} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
+  return <div className="editor-host"><div className="editor-surface"><Editor height="100%" theme={accessibleEditorTheme(accessibility, ['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark')} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),...accessibleEditorOptions(accessibility,path),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
 }

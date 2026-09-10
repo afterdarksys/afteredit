@@ -1,3 +1,4 @@
+import { AccessibilityContext, useReducedMotion } from './AccessibilityContext';
 import CommandPalette from './CommandPalette';
 import { cycleRegion, focusRegion } from './focus';
 import AccessibilityPanel from './AccessibilityPanel';
@@ -34,7 +35,9 @@ const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
   const [accessibilityJSON, setAccessibilityJSON] = usePersistedState('accessibility.v1', '{}');
+  const systemReducedMotion = useReducedMotion();
   const accessibility = restoreAccessibility(accessibilityJSON);
+  const effectiveAccessibility = {...accessibility,reducedMotion:accessibility.reducedMotion || systemReducedMotion};
   const [infrastructureProblems,setInfrastructureProblems]=useState<InfrastructureDiagnostic[]>([]);
   const [compatibility,setCompatibility]=useState(false);
   const [extensionRevision,setExtensionRevision]=useState(0);
@@ -240,7 +243,7 @@ function App() {
     };
     window.addEventListener('keydown', handler, true); return () => window.removeEventListener('keydown', handler, true);
   });
-  return <div className="app-container" data-contrast={accessibility.contrast} data-reduced-motion={accessibility.reducedMotion} style={{zoom:accessibility.zoom/100,width:`${10000/accessibility.zoom}vw`,height:`${10000/accessibility.zoom}vh`}}>
+  return <AccessibilityContext.Provider value={effectiveAccessibility}><div className="app-container" data-contrast={accessibility.contrast} data-reduced-motion={accessibility.reducedMotion} style={{zoom:accessibility.zoom/100,width:`${10000/accessibility.zoom}vw`,height:`${10000/accessibility.zoom}vh`}}>
     <a className="skip-link" href="#workspace" onClick={e=>{e.preventDefault();focusRegion('workspace');}}>Skip to workspace</a>
     <header data-tauri-drag-region className="titlebar"><strong>AfterEdit</strong><span>{activeRoot ? basename(activeRoot) : 'Developer workbench'}</span><button onClick={() => setPalette(true)}>Commands ⌘⇧P</button></header>
     {!isTauri() && <div className="notice">Browser preview: scratch editing and tools work here. Open the desktop app for filesystem, builds, terminal and AI.</div>}
@@ -288,6 +291,6 @@ function App() {
     </div>
     <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
     {palette && <CommandPalette commands={commands} onClose={()=>setPalette(false)}/>}
-  </div>;
+  </div></AccessibilityContext.Provider>;
 }
 export default App;

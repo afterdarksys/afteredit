@@ -62,6 +62,7 @@ function setDocument(data:any){
   editor.setModel(model);
   if(previous&&previous!==model)previous.dispose();
   if(data.options)editor.updateOptions(data.options);
+  if(data.theme)monaco.editor.setTheme(data.theme);
  }finally{applying=false;}
 }
 let started=false;
@@ -73,3 +74,5 @@ window.addEventListener('message',event=>{
  if(data.type==='command'){editor?.focus();void getService(ICommandService).then(service=>service.executeCommand(data.command)).then(result=>send({type:'command-result',message:typeof result==='string'?result:'Command completed'})).catch(report);}
 });
 send({type:'boot'});
+
+window.addEventListener('keydown',event=>{if(event.key==='F6'){event.preventDefault();event.stopPropagation();send({type:'cycle-region',backward:event.shiftKey});}},true);

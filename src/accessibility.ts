@@ -23,3 +23,17 @@ export function restoreAccessibility(json: string): AccessibilityPreferences {
   } catch { /* Older or damaged storage uses safe defaults. */ }
   return result;
 }
+
+export function accessibleEditorOptions(prefs: AccessibilityPreferences, path: string) {
+  return {
+    accessibilitySupport: prefs.screenReader,
+    ariaLabel: `Code editor: ${path}. Press F6 to leave the editor.`,
+    tabFocusMode: prefs.screenReader === 'on',
+    cursorWidth: prefs.largeCursor ? 4 : 2,
+    ...(prefs.largeCursor ? {cursorWidth:4,cursorStyle:'block' as const} : {}),
+    ...(prefs.reducedMotion ? {cursorBlinking:'solid' as const,smoothScrolling:false,cursorSmoothCaretAnimation:'off' as const} : {}),
+  };
+}
+export function accessibleEditorTheme(prefs: AccessibilityPreferences, fallback: string) {
+  return prefs.contrast === 'dark' ? 'hc-black' : prefs.contrast === 'light' ? 'hc-light' : fallback;
+}
