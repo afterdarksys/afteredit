@@ -1,3 +1,4 @@
+import { useSoundCues } from './useSoundCues';
 import OutputLog from './OutputLog';
 import { AccessibilityContext, useReducedMotion } from './AccessibilityContext';
 import CommandPalette from './CommandPalette';
@@ -38,6 +39,7 @@ function App() {
   const [accessibilityJSON, setAccessibilityJSON] = usePersistedState('accessibility.v1', '{}');
   const systemReducedMotion = useReducedMotion();
   const accessibility = restoreAccessibility(accessibilityJSON);
+  const playCue = useSoundCues(accessibility);
   const effectiveAccessibility = {...accessibility,reducedMotion:accessibility.reducedMotion || systemReducedMotion};
   const [infrastructureProblems,setInfrastructureProblems]=useState<InfrastructureDiagnostic[]>([]);
   const [compatibility,setCompatibility]=useState(false);
@@ -82,7 +84,8 @@ function App() {
   const debug = useDebugger(root,activeBuffer?.disk?active:'',(path,line)=>{setCompatibility(false);void openFile(path).then(()=>{setRevealLine(line);setView('debug');}).catch(report);});
   const scope = !activeRoot ? '' : activeBuffer?.disk && (active.startsWith(activeRoot + '/') || active.startsWith(activeRoot + '\\')) ? parent(active) : directory || activeRoot;
   const update = (next: string) => { if (activeBuffer) setBuffers(b => ({ ...b, [active]: { ...b[active], value: next } })); else setScratch(next); };
-  const report = (e: unknown) => setStatus(String(e));
+  const report = (e: unknown) => { setStatus(String(e)); playCue('error'); };
+  useEffect(()=>{if(debug.phase==="paused")playCue("paused");},[debug.phase,playCue]);
   useEffect(() => {
     document.body.classList.toggle('theme-mac', theme === 'mac');
     document.body.classList.toggle('theme-win', theme !== 'mac');
@@ -189,6 +192,7 @@ function App() {
       }
     } catch (e) { success=false;transcript+='\n'+String(e);setRunLog(log => log + '\n' + String(e)); } finally { setHistoryJSON(JSON.stringify([{root:activeRoot,ids,date:new Date().toISOString(),success:success&&!cancelled.current},...history].slice(0,30)));runningRef.current = false; setRunning(false); }
     setStatus(success&&!cancelled.current ? "Workflow succeeded" : "Workflow failed or stopped");
+    playCue(success&&!cancelled.current ? "success" : "error");
     return (success&&!cancelled.current?"Workflow succeeded":"Workflow failed or stopped")+transcript;
   }
   async function agentRead(relative:string):Promise<string>{
@@ -272,7 +276,7 @@ function App() {
             {view === 'languages' && <LanguagePanel root={activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
             {view === 'search' && <SearchPanel root={activeRoot} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel compatibility={compatibility} onCompatibility={enabled=>{setCompatibility(enabled);setView('editor');}} extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}
-            {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><AccessibilityPanel value={accessibility} onChange={v=>setAccessibilityJSON(JSON.stringify(v))}/><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
+            {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><AccessibilityPanel onTestSound={()=>playCue('success')} value={accessibility} onChange={v=>setAccessibilityJSON(JSON.stringify(v))}/><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
               <h2>Project and directory overrides</h2><p>Detected in explorer directory: {detectBuildSystems(entries.map(e=>e.name)).join(", ")||"No build manifests detected"}</p><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>
               {layers.map(path => <button key={path} onClick={() => void openFile(path).catch(report)}>{path}</button>)}<p role="alert">{configError}</p><h2>Effective settings</h2><pre>{JSON.stringify(config, null, 2)}</pre>
             </section>}

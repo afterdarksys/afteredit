@@ -1,6 +1,6 @@
 import { accessibilityDefaults, type AccessibilityPreferences } from './accessibility';
-export default function AccessibilityPanel({value, onChange}: {
-  value: AccessibilityPreferences; onChange: (value: AccessibilityPreferences) => void;
+export default function AccessibilityPanel({value, onChange, onTestSound}: {
+  onTestSound:()=>void; value: AccessibilityPreferences; onChange: (value: AccessibilityPreferences) => void;
 }) {
   return <section aria-labelledby="accessibility-title">
     <h2 id="accessibility-title">Accessibility</h2>
@@ -12,6 +12,7 @@ export default function AccessibilityPanel({value, onChange}: {
       {([['reducedMotion','Reduce motion'],['largeCursor','Large editor and terminal cursor'],['announceOutput','Announce incoming task and debug output'],['soundCues','Optional sound cues']] as const).map(([key,label])=><label key={key}><input type="checkbox" checked={value[key]} onChange={e=>onChange({...value,[key]:e.target.checked})}/>{label}</label>)}
       <label>Sound volume<input type="range" min="0" max="100" value={value.soundVolume} onChange={e=>onChange({...value,soundVolume:Number(e.target.value)})}/>{value.soundVolume}%</label>
     </div>
+    <button disabled={!value.soundCues || value.soundVolume===0} onClick={onTestSound}>Test sound cue</button>
     <button onClick={()=>onChange({...accessibilityDefaults})}>Reset accessibility settings</button>
   </section>;
 }
