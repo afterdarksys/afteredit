@@ -151,6 +151,12 @@ fn listen(app: AppHandle, requests: PathBuf) {
                 }
             }
 
+            // The whole reason local history exists: this temp file is
+            // deleted the moment the command returns.
+            if let Ok(existing) = fs::read_to_string(path) {
+                crate::history::snapshot(&app, Path::new(path), &existing, crate::history::Label::BridgeOpen);
+            }
+
             if app.emit(EVENT_REQUEST, request).is_err() {
                 return;
             }

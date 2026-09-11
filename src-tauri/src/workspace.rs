@@ -103,13 +103,18 @@ pub fn read_file(state: tauri::State<'_, WorkspaceState>, path: String) -> Resul
 }
 #[tauri::command]
 pub fn save_file(
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkspaceState>,
     path: String,
     content: String,
     expected: String,
 ) -> Result<(), String> {
     let path = allowed(&state, Path::new(&path))?;
-    write_checked(&path, &content, &expected)
+    write_checked(&path, &content, &expected)?;
+    // After the write succeeds: a snapshot of something that failed to save
+    // would be misleading.
+    crate::history::snapshot(&app, &path, &content, crate::history::Label::Save);
+    Ok(())
 }
 #[derive(Serialize)]
 pub struct ConfigLayer {

@@ -8,6 +8,7 @@ mod registry;
 mod context;
 mod editor_bridge;
 mod formatter;
+mod history;
 mod lsp_installer;
 mod policy;
 mod secrets;
@@ -50,6 +51,7 @@ pub fn run() {
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
  context::active_context,
+ history::history_list,history::history_read,
  editor_bridge::editor_release,
  policy::policy_discover,policy::policy_evaluate,
  secrets::scan_buffer_secrets,
@@ -102,13 +104,14 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 18] = [
+        let modules: [(&str, &str); 19] = [
             ("ai.rs", include_str!("ai.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
             ("context.rs", include_str!("context.rs")),
             ("editor_bridge.rs", include_str!("editor_bridge.rs")),
             ("formatter.rs", include_str!("formatter.rs")),
+            ("history.rs", include_str!("history.rs")),
             ("git.rs", include_str!("git.rs")),
             ("lsp.rs", include_str!("lsp.rs")),
             ("lsp_installer.rs", include_str!("lsp_installer.rs")),
