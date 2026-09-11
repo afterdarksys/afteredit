@@ -2,6 +2,7 @@ import OutputLog from './OutputLog';
 import PolicySection from './PolicySection';
 import {listen} from '@tauri-apps/api/event';
 import {useEffect,useRef,useState} from 'react';
+import { runTask } from './taskRunner';
 import {invoke,isTauri} from '@tauri-apps/api/core';
 import {infrastructureTasks,parseInfrastructureDiagnostics,type InfrastructureDiagnostic,type InfrastructureKind} from './infrastructure';
 import {expandTask,taskOrder} from './workflows';
@@ -19,7 +20,7 @@ export default function InfrastructurePanel({root,file,dirty,detected,onDiagnost
    const names=[...new Set(plan.map(step=>step.task.command as string))];if(kind==='Ansible'&&action==='debug-listen')names.push('ansibug');
    const checked=await invoke<typeof tools>('inspect_tools',{names});if(current!==generation.current)return;setTools(checked);
    const missing=checked.filter(tool=>!tool.available);if(missing.length)throw new Error('Unavailable tools: '+missing.map(tool=>tool.name).join(', ')+'. See installed-tool checks below.');
-   for(const step of plan){if(cancelled.current)throw new Error('Cancelled');const result=await invoke<{code:number;output:string}>('run_task',{root,cwd,task:step.task});log+=`\n> ${step.task.command} ${step.task.args.join(' ')}\n${result.output}\n[exit ${result.code}]\n`;if(current!==generation.current)return;setOutput(log.slice(-200000));
+   for(const step of plan){if(cancelled.current)throw new Error('Cancelled');const result=await runTask(root,cwd,step.task);log+=`\n> ${step.task.command} ${step.task.args.join(' ')}\n${result.output}\n[exit ${result.code}]\n`;if(current!==generation.current)return;setOutput(log.slice(-200000));
     if(['validate','lint'].includes(step.id)){try{const directory=await invoke<string>('task_directory',{root,cwd});const rows=parseInfrastructureDiagnostics(result.output,directory,kind+' '+step.id);setProblems(rows);onDiagnostics(rows);}catch(e){setStatus(String(e));if(result.code===0)throw e;}}
     if(result.code!==0)throw new Error(`${step.id} exited ${result.code}. See diagnostics and output.`);
    }

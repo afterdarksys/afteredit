@@ -15,6 +15,8 @@ import { detectInfrastructure, type InfrastructureDiagnostic } from './infrastru
 import DebugPanel from './DebugPanel';
 import { useDebugger } from './useDebugger';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { runTask, setTaskConfirmer, type Challenge } from './taskRunner';
+import ProductionConfirm from './ProductionConfirm';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -75,6 +77,11 @@ function App() {
   const [active, setActive] = useState('');
   const [diskChange,setDiskChange]=useState<{path:string;text?:string;error?:string}|null>(null);
   const [pendingEdit,setPendingEdit]=useState<PendingEdit|null>(null);
+  // A destructive command aimed at production, waiting to be confirmed.
+  const [challenge,setChallenge]=useState<{value:Challenge;settle:(typed:string|null)=>void}|null>(null);
+  useEffect(()=>{
+    setTaskConfirmer(value=>new Promise<string|null>(settle=>setChallenge({value,settle})));
+  },[]);
   const [reviewDisk,setReviewDisk]=useState(false);
   const [sessionReady,setSessionReady] = useState(!isTauri());
   const [roots, setRoots] = useState<string[]>([]);
@@ -297,7 +304,7 @@ function App() {
         if (cancelled.current) break;
         const task = expandTask(config.tasks[id],{project:activeRoot,file:activeBuffer?.disk?active:''});
         setRunLog(log => log + `\n> ${id}: ${task.command} ${task.args.join(' ')}\n`);
-        const {code,output} = await invoke<{code:number;output:string}>('run_task', { root: activeRoot, cwd: task.cwd ?? '.', task });
+        const {code,output} = await runTask(activeRoot, task.cwd ?? '.', task);
         transcript+=`\n${id}:\n${output}\n[exit ${code}]\n`;
         setRunLog(log => log + `\n[exit ${code}]\n`);
         if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
@@ -504,7 +511,12 @@ function App() {
     </div>
     <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>
     <span className="sr-only" role="status" aria-atomic="true">{debug.phase==="paused" ? `Debugger paused at ${debug.frame?.source?.path ?? "unknown source"}, line ${debug.frame?.line ?? "unknown"}` : ""}</span>
-    <footer className="status-bar"><span role="status">{status}</span><ContextBadge root={activeRoot} revision={revision}/><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
+    {challenge && <ProductionConfirm
+        challenge={challenge.value}
+        onConfirm={typed=>{challenge.settle(typed);setChallenge(null);}}
+        onCancel={()=>{challenge.settle(null);setChallenge(null);}}
+      />}
+      <footer className="status-bar"><span role="status">{status}</span><ContextBadge root={activeRoot} revision={revision}/><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
     {palette && <CommandPalette commands={commands} onClose={()=>setPalette(false)}/>}
   </div></AccessibilityContext.Provider>;
 }

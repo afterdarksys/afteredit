@@ -140,6 +140,19 @@ fn gather(root: Option<&Path>) -> ActiveContext {
     }
 }
 
+/// The single name a destructive command would act on, plus whether it looks
+/// like production. Shares `gather`, so the gate and the status strip can
+/// never disagree about what is being targeted.
+pub fn target(root: Option<&Path>) -> (Option<String>, bool) {
+    let context = gather(root);
+    let name = context
+        .kube_context
+        .clone()
+        .or_else(|| context.terraform_workspace.clone())
+        .or_else(|| context.aws_profile.clone());
+    (name, context.production)
+}
+
 #[tauri::command]
 pub async fn active_context(root: Option<String>) -> ActiveContext {
     tauri::async_runtime::spawn_blocking(move || gather(root.as_deref().map(Path::new)))

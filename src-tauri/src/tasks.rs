@@ -65,7 +65,24 @@ pub async fn run_task(
     root: String,
     cwd: String,
     task: Task,
+    confirmation: Option<String>,
 ) -> Result<TaskResult, String> {
+    // Before anything is spawned: a command that changes production has to be
+    // confirmed by typing the context name. Costs nothing for ordinary tasks,
+    // because only a destructive shape triggers the context probe.
+    if let Some(challenge) = crate::guard::challenge_for_task(
+        Some(std::path::Path::new(&root)),
+        &task.command,
+        &task.args,
+    ) {
+        if !crate::guard::answered(&challenge, confirmation.as_deref()) {
+            return Err(format!(
+                "`{}` targets {} and was not confirmed. Type the context name to run it.",
+                challenge.action, challenge.expected
+            ));
+        }
+    }
+
     let timeout = task.timeout_seconds.unwrap_or(900);
     if !(1..=3600).contains(&timeout) {
         return Err("Timeout must be 1–3600 seconds".into());

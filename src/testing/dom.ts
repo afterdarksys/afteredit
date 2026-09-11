@@ -26,6 +26,7 @@ export type Harness = {
   find: (selector: string) => HTMLElement | null;
   all: (selector: string) => HTMLElement[];
   click: (target: HTMLElement) => Promise<void>;
+  type: (target: HTMLElement, value: string) => Promise<void>;
 };
 
 export type Responses = Record<string, unknown | ((args: Record<string, unknown>) => unknown)>;
@@ -92,6 +93,20 @@ export async function render<P extends object>(
     all: (selector: string) => [...mounted.querySelectorAll(selector)] as HTMLElement[],
     click: async (target: HTMLElement) => {
       await act(async () => { target.click(); });
+    },
+    // React caches the input's last value, so assigning `.value` directly is
+    // ignored. Go through the prototype setter, then fire the event React
+    // actually listens for.
+    type: async (target: HTMLElement, value: string) => {
+      const view = target.ownerDocument.defaultView as unknown as {
+        HTMLInputElement: { prototype: object };
+        Event: new (type: string, init?: { bubbles?: boolean }) => Event;
+      };
+      const setter = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(target, value);
+      await act(async () => {
+        target.dispatchEvent(new view.Event('input', { bubbles: true }));
+      });
     },
   };
 }

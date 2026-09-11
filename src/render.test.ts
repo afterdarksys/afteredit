@@ -7,6 +7,7 @@ import HistoryPanel from './HistoryPanel.tsx';
 import ContextBadge from './ContextBadge.tsx';
 import PolicySection from './PolicySection.tsx';
 import ToolsPanel from './ToolsPanel.tsx';
+import ProductionConfirm from './ProductionConfirm.tsx';
 import HttpPanel from './HttpPanel.tsx';
 
 /** Every case gets a fresh DOM; a leaked one makes later failures nonsense. */
@@ -257,3 +258,33 @@ test('the http panel refuses to send with an undefined variable', async () => {
     assert.match(view.text(), /Undefined variable: missing/);
   });
 });
+
+// ------------------------------------------------------- production gate
+
+test('the production dialog starts locked and names what it will do', async () => {
+  await withDom({}, async () => {
+    const outcome: string[] = [];
+    const view = await render(ProductionConfirm, {
+      challenge: { action: 'terraform apply', expected: 'acme-prod', reason: 'acme-prod looks like production' },
+      onConfirm: (typed: string) => outcome.push(typed),
+      onCancel: () => outcome.push('<cancelled>'),
+    });
+
+    // The dialog has to say what runs and where, or it is just a speed bump
+    // with no information in it.
+    assert.match(view.text(), /terraform apply/);
+    assert.match(view.text(), /acme-prod/);
+
+    const go = view.all('button').find(b => /Run it/.test(b.textContent ?? ''))!;
+    assert.ok(go.hasAttribute('disabled'), 'the confirm button must start locked');
+    await view.click(go);
+    assert.deepEqual(outcome, [], 'a locked button must not confirm');
+
+    await view.click(view.all('button').find(b => /Cancel/.test(b.textContent ?? ''))!);
+    assert.deepEqual(outcome, ['<cancelled>']);
+  });
+});
+
+// Whether a given string unlocks it is decided in Rust (guard::answered) and
+// re-verified there before the task runs, so that is where the exact-match
+// cases live rather than being re-simulated through the DOM.

@@ -4,6 +4,7 @@ import OutputLog from './OutputLog';
 import type {Task} from './workflows';
 import type {InfrastructureDiagnostic} from './infrastructure';
 import {useEffect,useRef,useState} from 'react';
+import { runTask } from './taskRunner';
 import {invoke,isTauri} from '@tauri-apps/api/core';
 import {buildServerPlan,defaultSigning,archivePlan,exportPlan,exportOptions,exportMethods,type AppleSigning,appleDebug,appleDevices,deviceAction,type AppleDevice,appleSimulators,simulatorAction,appleProducts,type AppleSimulator,type AppleProduct,appleBuild,appleDiagnostics,appleMetadata,appleDestinations,type AppleMetadata,type AppleSelection,type AppleDestination} from './appleDevelopment';
 type Tool={name:string;available:boolean;detail:string};
@@ -34,7 +35,7 @@ export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug,active,
  async function execute(){if(!plan||running.current)return;running.current=true;cancelled.current=false;setBusy(true);setOutput('');setSummary('');setResultPath('');setProblems([]);onProblems([]);let off=()=>{},combined='';try{
   if(plan.exportReview){const current=await invoke<string>('apple_query',{root,query:{kind:'export-options',path:plan.exportReview.path}});if(current!==plan.exportReview.text)throw new Error('Export options changed. Prepare and review the export again.');}
   off=await listen<{text:string}>('task:output',e=>{if(running.current)setOutput(v=>(v+e.payload.text).slice(-200000));});
-  for(const task of plan.tasks){if(cancelled.current)break;const result=await invoke<{code:number;output:string}>('run_task',{root,cwd:task.cwd??'.',task});combined=(combined+'\n'+result.output).slice(-200000);const found=appleDiagnostics(result.output,root,task.cwd??'.');setProblems(v=>[...v,...found]);onProblems(appleDiagnostics(combined,root,task.cwd??'.'));if(result.code!==0)throw new Error('Apple command exited '+result.code+'. See output.');}
+  for(const task of plan.tasks){if(cancelled.current)break;const result=await runTask(root,task.cwd??'.',task);combined=(combined+'\n'+result.output).slice(-200000);const found=appleDiagnostics(result.output,root,task.cwd??'.');setProblems(v=>[...v,...found]);onProblems(appleDiagnostics(combined,root,task.cwd??'.'));if(result.code!==0)throw new Error('Apple command exited '+result.code+'. See output.');}
   if(cancelled.current)setStatus('Apple action stopped.');else{setResultPath(plan.result??'');setStatus('Apple action completed.');}
  }catch(e){if(plan.result)setResultPath(plan.result);setStatus(String(e));}finally{off();running.current=false;setBusy(false);setOutput(previous=>previous||combined||'No command output captured.');}}
  async function readResult(){setBusy(true);try{setSummary(await invoke<string>('apple_query',{root,query:{kind:'results',path:resultPath}}));setStatus('Test results loaded.');}catch(e){setStatus(String(e));}finally{setBusy(false);}}
