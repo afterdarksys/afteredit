@@ -34,6 +34,7 @@ import { editorDefaults, validateEditor, savedText } from './preferences';
 import { formatText } from './externalFormatting';
 import { languageForFilename } from './languages';
 import EditorBridgeBanner, { type PendingEdit } from './EditorBridgeBanner';
+import ContextBadge from './ContextBadge';
 import { usePersistedState } from './usePersistedState';
 import { defaults, matchingRules, expandTask, presets, resolveConfig, taskOrder, type ProjectConfig } from './workflows';
 const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
@@ -498,7 +499,7 @@ function App() {
     </div>
     <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>
     <span className="sr-only" role="status" aria-atomic="true">{debug.phase==="paused" ? `Debugger paused at ${debug.frame?.source?.path ?? "unknown source"}, line ${debug.frame?.line ?? "unknown"}` : ""}</span>
-    <footer className="status-bar"><span role="status">{status}</span><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
+    <footer className="status-bar"><span role="status">{status}</span><ContextBadge root={activeRoot} revision={revision}/><span>{Object.values(buffers).filter(b => b.value !== b.saved).length} unsaved · {running ? 'Workflow running' : 'AfterEdit'}</span></footer>
     {palette && <CommandPalette commands={commands} onClose={()=>setPalette(false)}/>}
   </div></AccessibilityContext.Provider>;
 }

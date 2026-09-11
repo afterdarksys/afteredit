@@ -5,6 +5,7 @@ mod ai_stream;
 mod dap;
 mod lsp;
 mod registry;
+mod context;
 mod editor_bridge;
 mod formatter;
 mod lsp_installer;
@@ -48,6 +49,7 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
+ context::active_context,
  editor_bridge::editor_release,
  policy::policy_discover,policy::policy_evaluate,
  secrets::scan_buffer_secrets,
@@ -100,10 +102,11 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 17] = [
+        let modules: [(&str, &str); 18] = [
             ("ai.rs", include_str!("ai.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
+            ("context.rs", include_str!("context.rs")),
             ("editor_bridge.rs", include_str!("editor_bridge.rs")),
             ("formatter.rs", include_str!("formatter.rs")),
             ("git.rs", include_str!("git.rs")),

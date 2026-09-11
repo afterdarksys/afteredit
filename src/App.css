@@ -341,3 +341,20 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
 .policy-message { flex: 1; min-width: 200px; }
 .policy-jump { background: transparent; border: none; color: #3794ff; cursor: pointer; font-family: Menlo, Monaco, monospace; font-size: 11px; padding: 0; text-decoration: underline; }
 .policy-nowhere { font-size: 11px; color: #666; }
+
+/* Active cluster / account / workspace */
+.context-badge {
+  display: inline-flex; align-items: center; gap: 10px; margin-left: 14px;
+  font-size: 11px; color: #9cdcfe; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.context-badge:hover { color: #fff; }
+.context-part { display: inline-flex; align-items: baseline; gap: 4px; }
+.context-label { color: #6a6a6a; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }
+.context-busy { color: #666; }
+/* Production reads differently: the point is to be noticed before an apply. */
+.context-production { color: #ffd166; }
+.context-warn {
+  background: #a1260d; color: #fff; padding: 1px 6px; border-radius: 3px;
+  font-size: 10px; letter-spacing: 0.08em;
+}
