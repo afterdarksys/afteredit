@@ -7,6 +7,7 @@ import HistoryPanel from './HistoryPanel.tsx';
 import ContextBadge from './ContextBadge.tsx';
 import PolicySection from './PolicySection.tsx';
 import ToolsPanel from './ToolsPanel.tsx';
+import HttpPanel from './HttpPanel.tsx';
 
 /** Every case gets a fresh DOM; a leaked one makes later failures nonsense. */
 async function withDom(responses: Responses, run: (calls: ReturnType<typeof mountEnvironment>) => Promise<void>) {
@@ -205,4 +206,54 @@ test('every panel unmounts cleanly', async () => {
     await render(HistoryPanel, { path: '/w/a.tf', current: '', onRestore: () => {} }, calls);
   });
   assert.ok(true);
+});
+
+// -------------------------------------------------------------------- http
+
+test('the http panel lists requests and shows a response', async () => {
+  const file = [
+    '@host = http://localhost:9',
+    '',
+    '### Health',
+    'GET {{host}}/healthz',
+    'Accept: application/json',
+    '',
+  ].join('\n');
+
+  await withDom(
+    {
+      http_send: {
+        status: 200, status_text: 'OK', headers: [['content-type', 'application/json']],
+        body: '{"ok":true}', elapsed_ms: 12, bytes: 11, truncated: false,
+        content_type: 'application/json',
+      },
+    },
+    async calls => {
+      const view = await render(HttpPanel, { fileName: 'api.http', buffer: file, onOpenLine: () => {} }, calls);
+      assert.match(view.text(), /Health/);
+      assert.match(view.text(), /GET/);
+
+      await view.click(view.all('.http-run')[0]);
+      const sent = calls.find(c => c.command === 'http_send');
+      assert.ok(sent, 'running a request must reach the backend');
+      // The variable has to be substituted before the request leaves the panel.
+      assert.equal((sent.args.request as { url: string }).url, 'http://localhost:9/healthz');
+      assert.match(view.text(), /200 OK/);
+      assert.match(view.text(), /12 ms/);
+    },
+  );
+});
+
+test('the http panel refuses to send with an undefined variable', async () => {
+  await withDom({}, async calls => {
+    const view = await render(HttpPanel, {
+      fileName: 'api.http',
+      buffer: '### X\nGET {{missing}}/x\n',
+      onOpenLine: () => {},
+    }, calls);
+    await view.click(view.all('.http-run')[0]);
+    // Sending to a URL with a literal {{missing}} in it helps nobody.
+    assert.equal(calls.filter(c => c.command === 'http_send').length, 0);
+    assert.match(view.text(), /Undefined variable: missing/);
+  });
 });

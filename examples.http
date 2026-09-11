@@ -1,0 +1,20 @@
+# AfterEdit HTTP requests. Run these from the HTTP panel in the left nav.
+# Requests are separated by ###; @name = value defines a variable.
+
+@baseUrl = https://httpbin.org
+
+### Health check
+GET {{baseUrl}}/status/200
+Accept: application/json
+
+### Echo a JSON body
+POST {{baseUrl}}/post
+Content-Type: application/json
+
+{
+  "service": "afteredit",
+  "ok": true
+}
+
+### A 404, to see how failures read
+GET {{baseUrl}}/status/404

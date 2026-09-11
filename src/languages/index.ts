@@ -7,6 +7,7 @@ import { registerToml } from "./toml";
 import { registerMakefile } from "./makefile";
 import { registerGroovy } from "./groovy";
 import { registerRego } from "./rego";
+import { registerHttpFile } from "./http";
 
 /** Languages Monaco does not ship but a devops/devsecops toolchain needs. */
 export function registerExtraLanguages() {
@@ -19,6 +20,7 @@ export function registerExtraLanguages() {
   if (!known.has("makefile")) registerMakefile();
   if (!known.has("groovy")) registerGroovy();
   if (!known.has("rego")) registerRego();
+  if (!known.has("http")) registerHttpFile();
 }
 
 /**

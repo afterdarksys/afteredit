@@ -380,3 +380,33 @@ dialog.accessible-dialog::backdrop { background:rgb(0 0 0 / 65%); }
   max-height:420px; overflow:auto; background:#1a1a1a; border:1px solid #333;
   border-radius:4px; padding:10px; font-size:12px; color:#d4d4d4; white-space:pre;
 }
+
+/* HTTP requests */
+.http-panel { flex:1; padding:18px 22px; overflow-y:auto; min-width:0; }
+.http-hint { color:#888; font-size:13px; max-width:56ch; }
+.http-problems { color:#f48771; font-size:12px; margin:8px 0; padding-left:18px; }
+.http-requests { list-style:none; margin:10px 0; padding:0; display:flex; flex-direction:column; gap:1px; }
+.http-requests li { display:flex; align-items:center; gap:6px; }
+.http-run {
+  flex:1; display:flex; align-items:baseline; gap:11px; padding:7px 9px;
+  background:rgba(255,255,255,0.02); border:none; color:inherit; font:inherit;
+  font-size:13px; text-align:left; cursor:pointer;
+}
+.http-run:hover:not(:disabled) { background:rgba(255,255,255,0.08); }
+.http-run:disabled { opacity:0.5; cursor:default; }
+.http-method {
+  flex:0 0 62px; font-family:Menlo, Monaco, monospace; font-size:11px;
+  font-weight:600; letter-spacing:0.04em;
+}
+.http-get { color:#4ec9b0; } .http-post { color:#569cd6; }
+.http-put, .http-patch { color:#dcdcaa; } .http-delete { color:#f48771; }
+.http-jump { background:none; border:none; color:#666; font-size:11px; cursor:pointer; font-family:Menlo, Monaco, monospace; }
+.http-jump:hover { color:#3794ff; }
+.http-variables { font-size:12px; color:#9cdcfe; margin:8px 0; }
+.http-response { margin-top:14px; border-top:1px solid #333; padding-top:10px; }
+.http-status-row { display:flex; gap:16px; font-size:12px; color:#999; margin-bottom:8px; }
+.http-ok { color:#4ec9b0; font-weight:600; } .http-bad { color:#f48771; font-weight:600; }
+.http-body {
+  max-height:460px; overflow:auto; background:#1a1a1a; border:1px solid #333;
+  border-radius:4px; padding:10px; font-size:12px; color:#d4d4d4; white-space:pre-wrap; word-break:break-word;
+}
