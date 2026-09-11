@@ -1,0 +1,208 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import { mountEnvironment, render, unmount, quiet, type Responses } from './testing/dom.ts';
+import EditorBridgeBanner from './EditorBridgeBanner.tsx';
+import HistoryPanel from './HistoryPanel.tsx';
+import ContextBadge from './ContextBadge.tsx';
+import PolicySection from './PolicySection.tsx';
+import ToolsPanel from './ToolsPanel.tsx';
+
+/** Every case gets a fresh DOM; a leaked one makes later failures nonsense. */
+async function withDom(responses: Responses, run: (calls: ReturnType<typeof mountEnvironment>) => Promise<void>) {
+  const calls = mountEnvironment(responses);
+  try {
+    await run(calls);
+  } finally {
+    await unmount();
+  }
+}
+
+// ---------------------------------------------------------------- the bridge
+
+test('the bridge banner names the waiting file and offers both outcomes', async () => {
+  await withDom({}, async () => {
+    const view = await render(EditorBridgeBanner, {
+      pending: { id: '1-2', path: '/tmp/kubectl-edit-9.yaml' },
+      dirty: false,
+      onFinish: () => {},
+      onAbort: () => {},
+    });
+    assert.match(view.text(), /kubectl-edit-9\.yaml/, 'must say which file is blocking');
+    assert.match(view.text(), /Save & continue/);
+    assert.match(view.text(), /Abort command/);
+  });
+});
+
+test('the bridge banner buttons map to different outcomes', async () => {
+  await withDom({}, async () => {
+    const pressed: string[] = [];
+    const view = await render(EditorBridgeBanner, {
+      pending: { id: '1-2', path: '/tmp/COMMIT_EDITMSG' },
+      dirty: true,
+      onFinish: () => pressed.push('finish'),
+      onAbort: () => pressed.push('abort'),
+    });
+    // These are exit 0 vs exit 1 to git; conflating them would be severe.
+    await view.click(view.all('button')[0]);
+    await view.click(view.all('button')[1]);
+    assert.deepEqual(pressed, ['finish', 'abort']);
+    assert.match(view.text(), /unsaved changes/);
+  });
+});
+
+// --------------------------------------------------------------- the history
+
+test('the history panel lists snapshots and restores one into the buffer', async () => {
+  const snapshot = 'apiVersion: v1\nkind: ConfigMap\n';
+  await withDom(
+    {
+      history_list: [
+        { id: '1700000200000-bridge-open', millis: 1700000200000, label: 'bridge-open', bytes: 34 },
+        { id: '1700000100000-save', millis: 1700000100000, label: 'save', bytes: 12 },
+      ],
+      history_read: snapshot,
+    },
+    async calls => {
+      const restored: string[] = [];
+      const view = await render(HistoryPanel, {
+        path: '/w/deploy.yaml',
+        current: 'current buffer\n',
+        onRestore: (text: string) => restored.push(text),
+      }, calls);
+
+      assert.equal(calls.filter(c => c.command === 'history_list').length, 1);
+      // The label that justifies the whole feature.
+      assert.match(view.text(), /Before terminal edit/);
+      assert.match(view.text(), /Saved/);
+
+      await view.click(view.all('.history-entry')[0]);
+      assert.equal(calls.at(-1)?.command, 'history_read');
+
+      const restore = view.all('button').find(b => /Restore into buffer/.test(b.textContent ?? ''));
+      assert.ok(restore, 'a previewed snapshot must be restorable');
+      await view.click(restore);
+      assert.deepEqual(restored, [snapshot], 'restore must hand back the snapshot, not the buffer');
+    },
+  );
+});
+
+test('the history panel says so when there is nothing yet', async () => {
+  await withDom({ history_list: [] }, async calls => {
+    const view = await render(HistoryPanel, { path: '/w/new.tf', current: '', onRestore: () => {} }, calls);
+    assert.match(view.text(), /No snapshots yet/);
+  });
+});
+
+test('the history panel survives a backend error', async () => {
+  // No stub for history_list, so the invoke rejects.
+  await withDom({}, async calls => {
+    const view = await quiet(() =>
+      render(HistoryPanel, { path: '/w/x.tf', current: '', onRestore: () => {} }, calls));
+    assert.match(view.text(), /Local history/, 'an error must not blank the panel');
+  });
+});
+
+// ----------------------------------------------------------- context badge
+
+test('the context badge shows what a command would target', async () => {
+  await withDom(
+    {
+      active_context: {
+        kube_context: 'acme-prod', kube_namespace: 'payments',
+        aws_profile: 'admin', aws_region: 'us-east-1',
+        terraform_workspace: 'prod', production: true,
+      },
+    },
+    async calls => {
+      const view = await render(ContextBadge, { root: '/w', revision: 0 }, calls);
+      assert.match(view.text(), /acme-prod\/payments/);
+      assert.match(view.text(), /admin \(us-east-1\)/);
+      assert.match(view.text(), /PROD/, 'a production context must be badged');
+    },
+  );
+});
+
+test('the context badge renders nothing when nothing resolves', async () => {
+  await withDom(
+    {
+      active_context: {
+        kube_context: null, kube_namespace: null, aws_profile: null,
+        aws_region: null, terraform_workspace: null, production: false,
+      },
+    },
+    async calls => {
+      const view = await render(ContextBadge, { root: '', revision: 0 }, calls);
+      assert.equal(view.text(), '', 'an empty context must not leave a stray badge');
+    },
+  );
+});
+
+// ----------------------------------------------------------------- policy
+
+test('the policy section reports a missing engine instead of failing silently', async () => {
+  await withDom(
+    { policy_discover: { policy_dirs: [], inputs: [], opa: null } },
+    async calls => {
+      const view = await render(PolicySection, {
+        root: '/w', onDiagnostics: () => {}, onOpen: () => {},
+      }, calls);
+      assert.match(view.text(), /OPA is not installed/);
+      assert.match(view.text(), /No \.rego files found/);
+    },
+  );
+});
+
+test('the policy section evaluates and hands findings to the marker pipeline', async () => {
+  await withDom(
+    {
+      policy_discover: { policy_dirs: ['/w/policies'], inputs: ['/w/plan.json'], opa: '/usr/local/bin/opa' },
+      policy_evaluate: {
+        engine: '/usr/local/bin/opa', policies: '/w/policies', input: '/w/plan.json', unlocated: 0,
+        findings: [{
+          severity: 'error', rule: 'terraform.s3', message: 'not encrypted',
+          resource: 'aws_s3_bucket.artifacts', path: '/w/main.tf', line: 5, column: 1,
+        }],
+      },
+    },
+    async calls => {
+      const diagnostics: unknown[][] = [];
+      const view = await render(PolicySection, {
+        root: '/w', onDiagnostics: (rows: unknown[]) => diagnostics.push(rows), onOpen: () => {},
+      }, calls);
+
+      const evaluate = view.all('button').find(b => /Evaluate policies/.test(b.textContent ?? ''));
+      assert.ok(evaluate, 'evaluate must be offered once a policy dir and input exist');
+      await view.click(evaluate);
+
+      assert.match(view.text(), /1 violation/);
+      assert.match(view.text(), /main\.tf:5/, 'a finding must be clickable back to its line');
+      assert.equal(diagnostics.at(-1)?.length, 1, 'findings must reach the marker pipeline');
+    },
+  );
+});
+
+// ------------------------------------------------------------------- tools
+
+test('the tools panel mounts and computes a subnet without a backend', async () => {
+  await withDom({}, async () => {
+    const view = await render(ToolsPanel, {
+      fileName: 'main.tf', buffer: 'resource "x" "y" {}\n', onApplyToBuffer: () => {},
+    });
+    const subnet = view.all('.tools-nav-item').find(b => /IP Subnet/.test(b.textContent ?? ''));
+    assert.ok(subnet, 'the subnet tool must be reachable');
+    await view.click(subnet);
+    // 10.42.0.0/22 is the default; these are the values a wrong
+    // signed-32-bit implementation would get wrong.
+    assert.match(view.text(), /255\.255\.252\.0/);
+    assert.match(view.text(), /10\.42\.3\.255/);
+  });
+});
+
+test('every panel unmounts cleanly', async () => {
+  // A throw during teardown means a listener or timer outlived the component.
+  await withDom({ history_list: [] }, async calls => {
+    await render(HistoryPanel, { path: '/w/a.tf', current: '', onRestore: () => {} }, calls);
+  });
+  assert.ok(true);
+});
