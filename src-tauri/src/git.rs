@@ -6,7 +6,7 @@ use std::{path::{Component,Path,PathBuf},process::Command,time::Duration};
 pub struct GitFile {pub path:String,pub original_path:Option<String>,pub index:String,pub worktree:String}
 #[derive(Serialize)]
 pub struct GitStatus {branch:String,files:Vec<GitFile>}
-fn git(root:&Path,args:&[&str])->Result<Output,String>{git_index(root,args,None)}
+pub(crate) fn git(root:&Path,args:&[&str])->Result<Output,String>{git_index(root,args,None)}
 fn git_index(root:&Path,args:&[&str],index:Option<&Path>)->Result<Output,String>{
     let binary=crate::toolpath::resolve_binary("git").ok_or("Git was not found. Install Git and reopen AfterEdit.")?;
     let mut command=Command::new(binary);
@@ -19,7 +19,7 @@ fn git_index(root:&Path,args:&[&str],index:Option<&Path>)->Result<Output,String>
 fn success(output:Output)->Result<String,String>{
     if output.code==0 {Ok(output.stdout)}else{Err(format!("Git exited {}: {}",output.code,output.stderr))}
 }
-fn repository(state:&WorkspaceState,root:&str)->Result<PathBuf,String>{
+pub(crate) fn repository(state:&WorkspaceState,root:&str)->Result<PathBuf,String>{
     let root=allowed(state,Path::new(root))?;
     let top=success(git(&root,&["rev-parse","--show-toplevel"])?)?;
     if Path::new(top.trim_end()).canonicalize().map_err(|e|e.to_string())? != root {

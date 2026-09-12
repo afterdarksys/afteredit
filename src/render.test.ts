@@ -9,6 +9,7 @@ import PolicySection from './PolicySection.tsx';
 import ToolsPanel from './ToolsPanel.tsx';
 import ProductionConfirm from './ProductionConfirm.tsx';
 import HttpPanel from './HttpPanel.tsx';
+import GitPanel from './GitPanel.tsx';
 
 /** Every case gets a fresh DOM; a leaked one makes later failures nonsense. */
 async function withDom(responses: Responses, run: (calls: ReturnType<typeof mountEnvironment>) => Promise<void>) {
@@ -288,3 +289,71 @@ test('the production dialog starts locked and names what it will do', async () =
 // Whether a given string unlocks it is decided in Rust (guard::answered) and
 // re-verified there before the task runs, so that is where the exact-match
 // cases live rather than being re-simulated through the DOM.
+
+// ------------------------------------------------- the pre-commit hook panel
+
+const repository = { branch: 'main', files: [] };
+
+/** A hook state, spread over the parts a given case cares about. */
+const hookState = (over: Record<string, unknown> = {}) =>
+  ({ present: false, ours: false, path: '/repo/.git/hooks/pre-commit', hooksPathOverride: null, gitleaks: true, ...over });
+
+test('with no hook installed the panel says terminal commits are unscanned, and offers to install', async () => {
+  const calls = mountEnvironment({ git_status: repository, precommit_hook_status: hookState(), install_precommit_hook: 'Pre-commit secret scan installed at /repo/.git/hooks/pre-commit.' });
+  try {
+    const view = await render(GitPanel, { root: '/repo', onOpen: () => {}, dirty: false }, calls);
+    assert.match(view.text(), /Only commits made here are scanned/, 'must name the gap it closes');
+
+    const install = view.all('button').find(b => b.textContent === 'Install pre-commit hook');
+    assert.ok(install, 'expected an install button');
+    await view.click(install);
+
+    const sent = calls.find(c => c.command === 'install_precommit_hook');
+    assert.deepEqual(sent?.args, { root: '/repo', replace: false }, 'a first install must never ask to replace');
+    assert.match(view.text(), /installed at/);
+  } finally {
+    await unmount();
+  }
+});
+
+test('someone else\'s hook is never replaced without a second, explicit click', async () => {
+  const calls = mountEnvironment({
+    git_status: repository,
+    precommit_hook_status: hookState({ present: true, ours: false }),
+    install_precommit_hook: (args: Record<string, unknown>) =>
+      args.replace ? 'Pre-commit secret scan installed. The previous hook was kept at /repo/.git/hooks/pre-commit.before-afteredit-1.' : Promise.reject(new Error('already exists')),
+  });
+  try {
+    const view = await render(GitPanel, { root: '/repo', onOpen: () => {}, dirty: false }, calls);
+    assert.match(view.text(), /AfterEdit did not write it/, 'must warn before touching a foreign hook');
+
+    const replace = view.all('button').find(b => b.textContent === 'Replace existing hook');
+    assert.ok(replace, 'replacing must be its own deliberate action');
+    await view.click(replace);
+    assert.deepEqual(calls.find(c => c.command === 'install_precommit_hook')?.args, { root: '/repo', replace: true });
+    assert.match(view.text(), /kept at/, 'the user must be told where their hook went');
+  } finally {
+    await unmount();
+  }
+});
+
+test('an installed hook without gitleaks admits how much it actually covers', async () => {
+  const calls = mountEnvironment({ git_status: repository, precommit_hook_status: hookState({ present: true, ours: true, gitleaks: false }) });
+  try {
+    const view = await render(GitPanel, { root: '/repo', onOpen: () => {}, dirty: false }, calls);
+    assert.match(view.text(), /built-in rules/, 'must not imply gitleaks-level coverage it does not have');
+    assert.match(view.text(), /install gitleaks/);
+  } finally {
+    await unmount();
+  }
+});
+
+test('a repository with core.hooksPath says where the hook will land', async () => {
+  const calls = mountEnvironment({ git_status: repository, precommit_hook_status: hookState({ hooksPathOverride: 'githooks' }) });
+  try {
+    const view = await render(GitPanel, { root: '/repo', onOpen: () => {}, dirty: false }, calls);
+    assert.match(view.text(), /githooks/, 'installing into .git/hooks here would do nothing');
+  } finally {
+    await unmount();
+  }
+});

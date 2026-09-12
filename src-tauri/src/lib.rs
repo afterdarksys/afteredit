@@ -10,6 +10,7 @@ mod editor_bridge;
 mod formatter;
 mod guard;
 mod history;
+mod hooks;
 mod http_client;
 mod lsp_installer;
 mod policy;
@@ -55,6 +56,7 @@ pub fn run() {
  context::active_context,
  guard::task_challenge,
  history::history_list,history::history_read,
+ hooks::precommit_hook_status,hooks::install_precommit_hook,
  http_client::http_send,
  editor_bridge::editor_release,
  policy::policy_discover,policy::policy_evaluate,
@@ -108,7 +110,7 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 21] = [
+        let modules: [(&str, &str); 22] = [
             ("ai.rs", include_str!("ai.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
@@ -117,6 +119,7 @@ mod registration_tests {
             ("formatter.rs", include_str!("formatter.rs")),
             ("guard.rs", include_str!("guard.rs")),
             ("history.rs", include_str!("history.rs")),
+            ("hooks.rs", include_str!("hooks.rs")),
             ("http_client.rs", include_str!("http_client.rs")),
             ("git.rs", include_str!("git.rs")),
             ("lsp.rs", include_str!("lsp.rs")),
@@ -160,4 +163,10 @@ mod registration_tests {
         }
         assert!(checked > 20, "expected to find many commands, found {checked}");
     }
+}
+
+/// The hook AfterEdit installs invokes this binary to scan staged changes.
+/// Checked before anything opens a window: the hook runs headless, inside git.
+pub fn precommit_cli() -> Option<i32> {
+    hooks::cli(std::env::args())
 }
