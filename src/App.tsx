@@ -26,6 +26,7 @@ import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
 import { relativePath, replaceUnique } from './agent';
+import { applyTextEdits, type FileEdits } from './workspaceEdit';
 import LanguagePanel from './LanguagePanel';
 import { detectBuildSystems, type ConnectedServer } from './languageServices';
 import SearchPanel from './SearchPanel';
@@ -327,6 +328,26 @@ function App() {
     setBuffers(current=>({...current,[path]:{...existing,value}}));
     return `Edited unsaved buffer ${relative}. Save it before running tasks.`;
   }
+  /** Edits a language server wants to make in files other than the one on
+   *  screen (a rename, a quick fix that touches a header). They land as
+   *  unsaved buffers to review, never straight to disk, and every file is
+   *  computed before any of them is committed so a bad edit set changes
+   *  nothing. */
+  async function applyWorkspaceEdit(files:FileEdits[]){
+    const updates:Record<string,Buffer>={};
+    for(const file of files){
+      const existing=buffersRef.current[file.path];
+      // Not open yet: take the file from disk, so a rename reaches code the
+      // user has never had on screen.
+      const disk=existing?null:await invoke<string>('read_file',{path:file.path});
+      const base=existing??{value:disk!,saved:disk!,disk:true};
+      updates[file.path]={...base,value:applyTextEdits(base.value,file.edits)};
+    }
+    buffersRef.current={...buffersRef.current,...updates};
+    setBuffers(current=>({...current,...updates}));
+    const names=Object.keys(updates).map(path=>basename(path));
+    setStatus(`Changed ${names.length} other file${names.length===1?'':'s'}: ${names.join(', ')}. Review and save them.`);
+  }
   async function saveProjectEdits(){
     for(const [path,buffer] of Object.entries(buffersRef.current)){
       if(!(path.startsWith(activeRoot+'/')||path.startsWith(activeRoot+'\\'))||buffer.value===buffer.saved)continue;
@@ -478,7 +499,7 @@ function App() {
           </section>}
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
+            {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
             {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug}/>}
             {view==='http' && <HttpPanel fileName={active||'scratch'} buffer={value} onOpenLine={line=>{setView('editor');setRevealLine(line);}}/>}
             {view==='history' && <HistoryPanel path={activeBuffer?.disk?active:''} current={value} onRestore={text=>update(text)}/>}
@@ -488,7 +509,7 @@ function App() {
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
             {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
             {view === 'languages' && <LanguagePanel initialLanguage={languageIntent.language} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
-            {view === 'search' && <SearchPanel root={activeRoot} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} /> }
+            {view === 'search' && <SearchPanel root={activeRoot} servers={servers} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} compatibility={compatibility} onCompatibility={enabled=>{setCompatibility(enabled);setView('editor');}} extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}
             {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><AccessibilityPanel onTestSound={()=>playCue('success')} value={accessibility} onChange={v=>setAccessibilityJSON(JSON.stringify(v))}/><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
               <h2>Project and directory overrides</h2><p>Detected in explorer directory: {detectBuildSystems(entries.map(e=>e.name)).join(", ")||"No build manifests detected"}</p><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>

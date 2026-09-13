@@ -10,6 +10,7 @@ import ToolsPanel from './ToolsPanel.tsx';
 import ProductionConfirm from './ProductionConfirm.tsx';
 import HttpPanel from './HttpPanel.tsx';
 import GitPanel from './GitPanel.tsx';
+import SearchPanel from './SearchPanel.tsx';
 
 /** Every case gets a fresh DOM; a leaked one makes later failures nonsense. */
 async function withDom(responses: Responses, run: (calls: ReturnType<typeof mountEnvironment>) => Promise<void>) {
@@ -286,6 +287,33 @@ test('the production dialog starts locked and names what it will do', async () =
   });
 });
 
+// Typing into a controlled input used to be impossible here, so the guard's
+// actual unlock path went untested and only `guard::answered` in Rust covered
+// it. The harness loads react-dom after the DOM exists now, so this is the
+// real thing: the wrong name stays locked, the right one unlocks.
+test('the production guard unlocks only for the exact context name', async () => {
+  const outcome: string[] = [];
+  await withDom({}, async () => {
+    const view = await render(ProductionConfirm, {
+      challenge: { action: 'kubectl delete ns payments', expected: 'acme-prod', reason: 'acme-prod looks like production' },
+      onConfirm: (typed: string) => outcome.push(typed),
+      onCancel: () => outcome.push('<cancelled>'),
+    });
+    const field = view.find('input[aria-label="Confirmation"]')!;
+    const go = () => view.all('button').find(b => /Run it/.test(b.textContent ?? ''))!;
+
+    await view.type(field, 'acme-pro');
+    assert.ok(go().hasAttribute('disabled'), 'a prefix of the name must not unlock it');
+    await view.type(field, 'acme-staging');
+    assert.ok(go().hasAttribute('disabled'), 'a different context must not unlock it');
+
+    await view.type(field, 'acme-prod');
+    assert.ok(!go().hasAttribute('disabled'), 'the exact name must unlock it');
+    await view.click(go());
+    assert.deepEqual(outcome, ['acme-prod'], 'the confirmed name is what gets passed back');
+  });
+});
+
 // Whether a given string unlocks it is decided in Rust (guard::answered) and
 // re-verified there before the task runs, so that is where the exact-match
 // cases live rather than being re-simulated through the DOM.
@@ -353,6 +381,69 @@ test('a repository with core.hooksPath says where the hook will land', async () 
   try {
     const view = await render(GitPanel, { root: '/repo', onOpen: () => {}, dirty: false }, calls);
     assert.match(view.text(), /githooks/, 'installing into .git/hooks here would do nothing');
+  } finally {
+    await unmount();
+  }
+});
+
+// -------------------------------------------------------- workspace symbols
+
+const server = (over: Record<string, unknown> = {}) =>
+  ({ id: 1, root: '/repo', root_uri: 'file:///repo', language: 'java', capabilities: { workspaceSymbolProvider: true }, ...over }) as never;
+
+test('symbol search is offered only once a server that can answer is connected', async () => {
+  const calls = mountEnvironment({ workspace_search: { hits: [], truncated: false } });
+  try {
+    const view = await render(SearchPanel, { root: '/repo', servers: [], onOpen: () => {} }, calls);
+    const radio = view.all('input[type=radio]')[1] as HTMLInputElement;
+    assert.equal(radio.disabled, true, 'no server means nothing can answer a symbol query');
+    assert.match(view.text(), /start a language server first/);
+  } finally {
+    await unmount();
+  }
+});
+
+test('a symbol search asks the server and jumps to what it finds', async () => {
+  let opened: [string, number] | null = null;
+  const calls = mountEnvironment({
+    lsp_request: [
+      { name: 'PaymentService', kind: 5, containerName: 'com.acme', location: { uri: 'file:///repo/src/PaymentService.java', range: { start: { line: 11, character: 13 }, end: { line: 11, character: 27 } } } },
+      // A symbol inside a jar has no file to open, so it must be dropped
+      // rather than opening something that does not exist.
+      { name: 'String', kind: 5, location: { uri: 'jdt://contents/rt.jar/java.lang/String.class', range: { start: { line: 0, character: 0 } } } },
+    ],
+  });
+  try {
+    const view = await render(SearchPanel, { root: '/repo', servers: [server()], onOpen: (p: string, l: number) => { opened = [p, l]; } }, calls);
+    await view.click(view.all('input[type=radio]')[1]);
+    await view.type(view.find('input[aria-label="Symbol search"]')!, 'Payment');
+    await view.click(view.all('button').find(b => b.textContent === 'Search')!);
+
+    const sent = calls.find(c => c.command === 'lsp_request');
+    assert.equal((sent?.args as Record<string, unknown>).method, 'workspace/symbol');
+    assert.match(view.text(), /PaymentService/);
+    assert.match(view.text(), /Class in com\.acme/, 'the kind and container are what make a symbol list readable');
+    assert.doesNotMatch(view.text(), /rt\.jar/, 'a symbol with no file on disk must not be offered');
+
+    await view.click(view.all('button.search-hit')[0]);
+    assert.deepEqual(opened, ['/repo/src/PaymentService.java', 12], 'LSP lines are zero-based, the editor is not');
+  } finally {
+    await unmount();
+  }
+});
+
+test('one dead server does not blank out the results from another', async () => {
+  const calls = mountEnvironment({
+    lsp_request: (args: Record<string, unknown>) =>
+      args.session === 1 ? Promise.reject(new Error('server stopped'))
+        : [{ name: 'Widget', kind: 5, location: { uri: 'file:///repo/Widget.cpp', range: { start: { line: 0, character: 0 } } } }],
+  });
+  try {
+    const view = await render(SearchPanel, { root: '/repo', servers: [server(), server({ id: 2, language: 'cpp' })], onOpen: () => {} }, calls);
+    await view.click(view.all('input[type=radio]')[1]);
+    await view.type(view.find('input[aria-label="Symbol search"]')!, 'Widget');
+    await view.click(view.all('button').find(b => b.textContent === 'Search')!);
+    assert.match(view.text(), /Widget/, 'the live server still answered');
   } finally {
     await unmount();
   }

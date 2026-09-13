@@ -1,6 +1,22 @@
 import { JSDOM } from 'jsdom';
 import { act, createElement, type ComponentType } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
+import type { Root } from 'react-dom/client';
+
+/**
+ * react-dom is loaded lazily, and never at module scope.
+ *
+ * It feature-detects the DOM once, when it is first imported: with no `window`
+ * yet, it decides the `input` event is unsupported and falls back to its
+ * legacy change detection for the rest of the process. The visible symptom is
+ * that no controlled text input can ever be typed into -- `onChange` simply
+ * never fires. Importing it only after `mountEnvironment` has installed the
+ * globals is what makes `type()` work.
+ */
+let createRoot: ((container: Element) => Root) | undefined;
+async function reactDom() {
+  if (!createRoot) ({ createRoot } = (await import('react-dom/client')) as unknown as { createRoot: (container: Element) => Root });
+  return createRoot;
+}
 
 /**
  * A DOM plus a Tauri stub, so components can actually be mounted.
@@ -78,7 +94,7 @@ export async function render<P extends object>(
   container = document.createElement('div');
   document.body.appendChild(container);
   const mounted = container;
-  root = createRoot(mounted);
+  root = (await reactDom())(mounted);
 
   // The async act flushes effects, so an invoke made on mount has resolved
   // (or rejected) by the time assertions run.
