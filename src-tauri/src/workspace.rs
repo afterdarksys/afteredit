@@ -223,7 +223,7 @@ mod tests {
     }
 }
 
-fn write_checked(path: &Path, content: &str, expected: &str) -> Result<(), String> {
+pub(crate) fn write_checked(path: &Path, content: &str, expected: &str) -> Result<(), String> {
     use std::io::Write;
     if fs::read_to_string(path).map_err(error)? != expected {
         return Err(

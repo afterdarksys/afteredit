@@ -1,3 +1,5 @@
+pub mod service;
+mod shared_workspace;
 mod menu;
 mod apple;
 mod ai;
@@ -49,6 +51,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             menu::update_menu,
+            shared_workspace::service_start, shared_workspace::service_request,
             pty::spawn_pty,
             pty::pty_write,
             pty::pty_resize,
@@ -110,8 +113,9 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 22] = [
+        let modules: [(&str, &str); 23] = [
             ("ai.rs", include_str!("ai.rs")),
+            ("shared_workspace.rs", include_str!("shared_workspace.rs")),
             ("apple.rs", include_str!("apple.rs")),
             ("dap.rs", include_str!("dap.rs")),
             ("context.rs", include_str!("context.rs")),

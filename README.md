@@ -105,6 +105,19 @@ Rules accept `save` or `manual`, with `*`, `**`, and `?` path globs. Save rules 
 matching tasks for an explicit Run action. Opening a repository never runs its
 commands. Trust resets when the project scope/configuration changes.
 
+Build workflows → **Run monitor** shows live task output, elapsed time, exit
+status, cancellation/timeouts, structured test cases and retained run history.
+Node and Go reporter presets enable test exploration; JUnit reports can be
+imported. Named tasks support reviewed reruns, bounded repeated attempts, and
+failed-test debug configuration handoff. Run and debug adds a request timeline,
+multiple watches, pause comparisons, exception details, data breakpoints, memory,
+disassembly and adapter-supported reverse controls. Diagnostic exports require
+an editable local preview.
+
+See [monitoring and debugging](MONITORING-DEBUGGING.md) for configuration,
+controls, limits and verification. The [design record](DEBUGGING-DESIGN.md)
+explains the architecture and original implementation plan.
+
 ## BYOK and agents
 
 The AI panel sends requests through the native HTTP client to a user-configured
@@ -301,7 +314,7 @@ adapter listening on a localhost TCP port. Install adapters separately.
 The panel includes gutter/line breakpoints, conditional and hit-count breakpoints,
 logpoints, exception-filter IDs, continue/pause/step controls, thread selection,
 call stacks, scopes, expandable variables, variable editing when supported, and
-expression evaluation with one watched expression refreshed on each pause. Variable
+expression evaluation with multiple watches and optional refresh on each pause. Variable
 and stack references are discarded on resume. Views page the first 100 stack frames
 and first 200 variables; variable trees expand to eight levels. Breakpoints refer
 to saved line numbers: recheck them after structural source edits.
@@ -311,9 +324,9 @@ adapter's initialized event before breakpoints/configurationDone, without waitin
 for a launch response that may itself depend on configurationDone. Stop disconnects
 and closes our adapter; attach requests leave the target running where the adapter
 supports that behavior. Reverse requests including runInTerminal are not implemented.
-Use internalConsole or an existing target/adapter. Memory views, disassembly,
-reverse debugging, multi-session orchestration and debugger-extension installation
-are not included.
+Use internalConsole or an existing target/adapter. Memory, disassembly and reverse
+controls depend on adapter capabilities. Multi-session orchestration and
+debugger-extension installation are not included.
 
 Project/directory `.afteredit.json` can define named `debug` configurations:
 
@@ -507,3 +520,7 @@ On macOS, use ⌘N for a new file, ⌘⇧S for Save As, ⌘⌥O to add a project
 ⌘P to switch open editors, and ⌘⇧O for symbols in the current editor. Commands are
 also available from the command palette. The menu catalogue is shared with the
 workbench; editor actions are disabled while its editor is unavailable.
+
+### Shared CLI prototype
+
+Build with `npm run cli:build`, then run `./bin/afteredit .` for the plain terminal editor or `./bin/afteredit README.md --tui` for the optional full-screen surface. The desktop **Shared workspace** panel joins the same service and versioned buffers. See [CLI-PROTOTYPE.md](CLI-PROTOTYPE.md) for server mode, GUI connections, accessible editing, tasks/debugging, SSH and current limitations.

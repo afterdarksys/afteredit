@@ -25,6 +25,8 @@ export async function nativeHarness(page:Page){
     if(command==='git_review_staged')return {tree:'reviewed-tree',diff:'+ staged content'};
     if(command==='git_commit'){staged=false;return 'Committed fixture';}
     if(command==='project_config')return [];
+    if(command==='formattable_languages')return [];
+    if(command==='editor_bridge_start')return {port:0};
     if(command==='spawn_pty')return true;
     if(command==='ask_ai')return new Promise((resolve,reject)=>pending.set(args.request.requestId,{resolve,reject}));
     if(command==='cancel_ai'){pending.get(args.requestId)?.reject('AI request cancelled; reservation retained.');pending.delete(args.requestId);return;}

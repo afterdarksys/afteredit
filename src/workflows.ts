@@ -2,7 +2,7 @@ import { infrastructureTasks } from './infrastructure.ts';
 import { debugConfig, type DebugConfig } from './debugging.ts';
 import type { ServerConfig } from './languageServices.ts';
 import { editorDefaults, validateEditor, type EditorPreferences } from './preferences.ts';
-export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number };
+export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number; testReporter?: "node"|"go"; debugConfiguration?: string };
 export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[]; exclude?: string[]; enabled?: boolean };
 export type ProjectConfig = { editor: EditorPreferences; debug: Record<string,DebugConfig>; tasks: Record<string, Task>; rules: Rule[]; languageServers: Record<string,ServerConfig>; workflows: Record<string,string[]>; instructions: string };
 export const defaults: ProjectConfig = { editor: editorDefaults, debug: {}, tasks: {}, rules: [], languageServers: {}, workflows: {}, instructions: '' };
@@ -25,6 +25,8 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
         if (task.dependsOn !== undefined && !strings(task.dependsOn)) throw new Error(`Invalid dependencies in ${id}`);
         if (task.env !== undefined && (!record(task.env) || !Object.values(task.env).every(v => typeof v === 'string'))) throw new Error(`Invalid environment in ${id}`);
         if(task.timeoutSeconds!==undefined && (!Number.isInteger(task.timeoutSeconds)||Number(task.timeoutSeconds)<1||Number(task.timeoutSeconds)>3600)) throw new Error(`Invalid timeout in ${id}`);
+        if(task.testReporter!==undefined && !['node','go'].includes(String(task.testReporter))) throw new Error(`Invalid test reporter in ${id}`);
+        if(task.debugConfiguration!==undefined && typeof task.debugConfiguration!=='string') throw new Error(`Invalid debug configuration in ${id}`);
         result.tasks[id] = task as Task;
       }
     }
@@ -74,6 +76,8 @@ export const presets: Record<string, Record<string, Task>> = {
   ...infrastructureTasks,
   'Swift Package':{build:{command:'/usr/bin/xcrun',args:['swift','build']},test:{command:'/usr/bin/xcrun',args:['swift','test']}},
   'Rust / Cargo': { build: { command: 'cargo', args: ['build'] }, test: { command: 'cargo', args: ['test'] } },
+  'Node structured tests': {test:{command:'node',args:['--test'],testReporter:'node'}},
+  'Go structured tests': {test:{command:'go',args:['test','-json','./...'],testReporter:'go'}},
   Go: { build: { command: 'go', args: ['build', './...'] }, test: { command: 'go', args: ['test', './...'] } },
   'C / C++ / CMake': { configure: { command: 'cmake', args: ['-S', '.', '-B', 'build'] }, build: { command: 'cmake', args: ['--build', 'build'], dependsOn: ['configure'] }, test: { command: 'ctest', args: ['--test-dir', 'build'], dependsOn: ['build'] } },
   Make: { build: { command: 'make', args: [] }, test: { command: 'make', args: ['test'] } },

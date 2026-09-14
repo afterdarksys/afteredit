@@ -1,0 +1,11 @@
+#!/bin/sh
+# Repository launcher; build once with npm run cli:build.
+set -eu
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -x "$repo/src-tauri/target/debug/afteredit-cli" ]; then
+  exec "$repo/src-tauri/target/debug/afteredit-cli" "$@"
+elif [ -x "$repo/src-tauri/target/release/afteredit-cli" ]; then
+  exec "$repo/src-tauri/target/release/afteredit-cli" "$@"
+fi
+printf '%s\n' 'Build the CLI first: npm run cli:build' >&2
+exit 1

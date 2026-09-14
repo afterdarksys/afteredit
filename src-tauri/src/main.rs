@@ -7,5 +7,7 @@ fn main() {
     if let Some(code) = afteredit_lib::precommit_cli() {
         std::process::exit(code);
     }
+    let args:Vec<String>=std::env::args().skip(1).collect();
+    if !args.is_empty() && args[0]!="--gui" {std::process::exit(afteredit_lib::service::cli::main(args));}
     afteredit_lib::run()
 }

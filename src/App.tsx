@@ -16,6 +16,8 @@ import DebugPanel from './DebugPanel';
 import { useDebugger } from './useDebugger';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { runTask, setTaskConfirmer, type Challenge } from './taskRunner';
+import SharedWorkspacePanel from './SharedWorkspacePanel';
+import RunMonitorPanel from './RunMonitorPanel';
 import ProductionConfirm from './ProductionConfirm';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -47,7 +49,7 @@ const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
 const CodeEditor = lazy(() => import('./CodeEditor'));
 type Entry = { name: string; path: string; directory: boolean };
 type Buffer = { value: string; saved: string; disk: boolean };
-type View = 'apple' | 'git' | 'history' | 'http' | 'infrastructure' | 'debug' | 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
+type View = 'shared' | 'apple' | 'git' | 'history' | 'http' | 'infrastructure' | 'debug' | 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
 const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
@@ -111,12 +113,15 @@ function App() {
   const [pendingTasks, setPendingTasks] = useState<string[]>([]);
   const [palette, setPalette] = useState(false);
   const runningRef = useRef(false);
+  const [sharedDirty, setSharedDirty] = useState(false);
   const dirtyRef = useRef(false);
-  dirtyRef.current = Object.values(buffers).some(b => b.value !== b.saved);
+  dirtyRef.current = sharedDirty || Object.values(buffers).some(b => b.value !== b.saved);
   const cancelled = useRef(false);
   const activeBuffer = buffers[active];
   const value = activeBuffer?.value ?? scratch;
   const activeRoot = roots.filter(r => active.startsWith(r + '/') || active.startsWith(r + '\\')).sort((a,b) => b.length - a.length)[0] ?? (activeBuffer?.disk ? '' : root);
+  const [preparedDebug,setPreparedDebug]=useState<{config:import('./debugging').DebugConfig;origin:string;id:number}>();
+  useEffect(()=>setPreparedDebug(undefined),[root]);
   const debug = useDebugger(root,activeBuffer?.disk?active:'',(path,line)=>{setCompatibility(false);void openFile(path).then(()=>{setRevealLine(line);setView('debug');}).catch(report);});
   const scope = !activeRoot ? '' : activeBuffer?.disk && (active.startsWith(activeRoot + '/') || active.startsWith(activeRoot + '\\')) ? parent(active) : directory || activeRoot;
   const update = (next: string) => { if (activeBuffer) setBuffers(b => ({ ...b, [active]: { ...b[active], value: next } })); else setScratch(next); };
@@ -254,6 +259,7 @@ function App() {
   // A terminal command ($EDITOR) blocked on a file we opened for it.
   const bridge = useRef({ open: (_p: string) => Promise.resolve(), save: () => Promise.resolve(), report: (_e: unknown) => {} });
   useEffect(() => {
+    if(!isTauri())return;
     let stop: (() => void) | undefined, dead = false;
     void listen<PendingEdit>('editor:request', async event => {
       try { await bridge.current.open(event.payload.path); setPendingEdit(event.payload); }
@@ -296,6 +302,7 @@ function App() {
       if (ids.length) { setPendingTasks(ids); setView('tasks'); }
     } catch (e) { report(e); }
   }
+  useEffect(()=>{const open=(event:Event)=>{const {path,line}=(event as CustomEvent).detail;if(path.startsWith(root+'/'))void openFile(path).then(()=>{setRevealLine(line);setView('editor');}).catch(report);};window.addEventListener('afteredit:open-test-source',open);return()=>window.removeEventListener('afteredit:open-test-source',open);},[root]);
   async function run(ids: string[], approved=false):Promise<string> {
     if ((!trusted&&!approved) || configError || runningRef.current) throw new Error('Workflow unavailable: trust commands, wait for configuration, or stop the running task.');
     runningRef.current = true; cancelled.current = false; setRunning(true); setRunLog(''); setPendingTasks([]);
@@ -305,7 +312,7 @@ function App() {
         if (cancelled.current) break;
         const task = expandTask(config.tasks[id],{project:activeRoot,file:activeBuffer?.disk?active:''});
         setRunLog(log => log + `\n> ${id}: ${task.command} ${task.args.join(' ')}\n`);
-        const {code,output} = await runTask(activeRoot, task.cwd ?? '.', task);
+        const {code,output} = await runTask(activeRoot, task.cwd ?? '.', task, {taskName:id});
         transcript+=`\n${id}:\n${output}\n[exit ${code}]\n`;
         setRunLog(log => log + `\n[exit ${code}]\n`);
         if (code !== 0) throw new Error(`Task ${id} failed (${code}); dependent tasks were skipped.`);
@@ -412,7 +419,7 @@ function App() {
     }
     if(id==='file.open')return choose(false);
     if(id==='file.folder')return choose(true);
-    if(id==='file.save')return save();
+    if(id==='file.save'){if(view==='shared'){window.dispatchEvent(new Event('afteredit:shared-save'));return;}return save();}
     if(id==='file.save-as')return saveAs();
     if(id==='file.save-all')return saveAll();
     if(id==='file.revert')return reloadFile();
@@ -450,6 +457,7 @@ function App() {
   },[]);
   const commands = openEditorsOnly ? [{title:'Scratch',action:()=>{setActive('');setView('editor');}},...Object.keys(buffers).map(path=>({title:path,action:()=>{setActive(path);setView('editor');}}))] : [
     ...(['workbench-navigation','explorer','workspace','terminal'] as const).map(id=>({title:'Focus '+id,action:()=>{if(id==='explorer')setSidebarVisible(true);if(id==='terminal')setTerminalVisible(true);requestAnimationFrame(()=>focusRegion(id));}})),
+    {title:'Shared workspace and CLI',action:()=>setView('shared')},
     {title:'Accessibility settings',action:()=>setView('settings')},
     ...menuCommands.filter(c=>enabledMenu.includes(c.id)&&!c.id.startsWith('window.')&&c.id!=='view.commands').map(c=>({title:c.title,action:()=>{void dispatchMenu(c.id).catch(report);}})),
   ];
@@ -458,7 +466,7 @@ function App() {
       if (e.key === 'F6' && !palette) { e.preventDefault(); cycleRegion(e.shiftKey); return; }
       if (palette) return;
       if (e.defaultPrevented) return;
-      if (!isTauri() && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
+      if (view !== 'shared' && !isTauri() && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !(config.editor.keymap === 'emacs' && e.ctrlKey && !e.metaKey)) { e.preventDefault(); void save(); }
       if (!isTauri() && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') { e.preventDefault(); void choose(e.shiftKey); }
       if (!isTauri() && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); setOpenEditorsOnly(false); setPalette(p => !p); }
       if (e.key === 'Escape') setPalette(false);
@@ -472,7 +480,7 @@ function App() {
     {!sessionReady && <div role="status" className="session-loading">Restoring previous session…</div>}
     <div className="main-content" inert={!sessionReady}>
       <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
-        ['editor', Files, 'Files'], ['apple', Code, 'Apple development'], ['git', Code, 'Source control'], ['history', History, 'Local history'], ['http', Zap, 'HTTP requests'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
+        ['editor', Files, 'Files'], ['shared', Code, 'Shared workspace'], ['apple', Code, 'Apple development'], ['git', Code, 'Source control'], ['history', History, 'Local history'], ['http', Zap, 'HTTP requests'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
       <aside style={{display:sidebarVisible?undefined:'none'}} id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
@@ -500,12 +508,13 @@ function App() {
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
             {(view === 'editor'||view === 'debug') && <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} revealLine={revealLine} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>}
-            {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug}/>}
+            {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug} prepared={preparedDebug}/>}
             {view==='http' && <HttpPanel fileName={active||'scratch'} buffer={value} onOpenLine={line=>{setView('editor');setRevealLine(line);}}/>}
             {view==='history' && <HistoryPanel path={activeBuffer?.disk?active:''} current={value} onRestore={text=>update(text)}/>}
             {<div style={{display:view==='infrastructure'?'flex':'none',flex:1,minWidth:0}}><InfrastructurePanel root={activeRoot} file={activeBuffer?.disk?active:''} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} detected={detectInfrastructure(entries.map(e=>e.name))} onDiagnostics={setInfrastructureProblems} onOpen={(path,line)=>{void openFile(path).then(()=>setRevealLine(line)).catch(report);}} onConfigure={preset=>{setPreset(preset);setView('settings');}} onDebug={()=>{setCompatibility(false);setView('debug');}}/></div>}
             <div style={{display:view==='apple'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><ApplePanel key={activeRoot} root={activeRoot} active={active} onLanguage={project=>{setLanguageIntent({root:project.endsWith('Package.swift')?activeRoot+(project.includes('/')?'/'+project.slice(0,project.lastIndexOf('/')):'' ):activeRoot,language:'swift'});setView('languages');}} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} onProblems={setAppleProblems} onDebug={config=>{localStorage.setItem('debug.config:'+activeRoot,JSON.stringify(config));setRoot(activeRoot);setCompatibility(false);setView('debug');}} onOpen={(path,line)=>{void openFile(path).then(()=>{setRevealLine(line);setView('editor');}).catch(report);}}/></div>
             {view === 'git' && <GitPanel key={root} root={root} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} onOpen={path=>void openFile(path).catch(report)}/>}
+            <div style={{display:view==='shared'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><SharedWorkspacePanel root={activeRoot} onDirty={setSharedDirty}/></div>
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
             {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
             {view === 'languages' && <LanguagePanel initialLanguage={languageIntent.language} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
@@ -523,6 +532,7 @@ function App() {
               {matchingRules(config,'manual',active.slice(activeRoot.length + 1).replace(/\\/g,'/')).map((r,i) => <button key={i} disabled={!trusted || running || !!configError} onClick={() => void run(r.tasks)}>Run rule: {r.tasks.join(', ')}</button>)}
               {running && <button onClick={() => { cancelled.current = true; void invoke('cancel_task').catch(report); }}>Stop workflow</button>}
               <details><summary>Recent workflow runs</summary>{history.filter(h=>h.root===activeRoot).map((h,i)=><p key={i}>{h.date} · {h.ids.join(", ")} · {h.success?"Passed":"Failed / stopped"}</p>)}</details>
+              <RunMonitorPanel root={activeRoot} tasks={Object.fromEntries(Object.entries(config.tasks).map(([id,task])=>{try{return [id,expandTask(task,{project:activeRoot,file:activeBuffer?.disk?active:''})];}catch{return [id,task];}}))} configured={config.debug} allowed={trusted&&!configError&&!running&&!Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} onDebug={(config,origin)=>{setPreparedDebug({config,origin,id:Date.now()});setView('debug');}} />
               <OutputLog label="Workflow output">{runLog || 'Task output will appear here.'}</OutputLog><p>Save rules queue matching tasks for review. No project command runs just because you open or save a file. Use **/*.go style patterns relative to the project root.</p>
             </section>}
           </div>

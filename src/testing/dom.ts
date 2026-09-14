@@ -65,6 +65,8 @@ export function mountEnvironment(responses: Responses = {}, tauri = true): Invok
   expose('HTMLElement', win.HTMLElement);
   expose('Element', win.Element);
   expose('Node', win.Node);
+  expose('DOMParser', win.DOMParser);
+  expose('localStorage', win.localStorage);
   expose('Event', win.Event);
   expose('MouseEvent', win.MouseEvent);
   expose('getComputedStyle', win.getComputedStyle.bind(win));
@@ -74,10 +76,15 @@ export function mountEnvironment(responses: Responses = {}, tauri = true): Invok
 
   (globalThis as Record<string, unknown>).isTauri = tauri;
   win.isTauri = tauri;
+  const listeners=new Map<number,{event:string;handler:(event:unknown)=>void}>();
+  win.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:(_event:string,id:number)=>listeners.delete(id)};
+  win.testEmit=(event:string,payload:unknown)=>{for(const [id,listener] of listeners)if(listener.event===event)listener.handler({event,id,payload});};
   win.__TAURI_INTERNALS__ = {
     transformCallback: (callback: unknown) => callback,
     invoke: async (command: string, args: Record<string, unknown> = {}) => {
       calls.push({ command, args });
+      if(command==='plugin:event|listen'){const id=calls.length;listeners.set(id,args as any);return id;}
+      if(command==='plugin:event|unlisten')return;
       if (!(command in responses)) throw new Error(`no stub for '${command}'`);
       const reply = responses[command];
       return typeof reply === 'function' ? (reply as (a: Record<string, unknown>) => unknown)(args) : reply;

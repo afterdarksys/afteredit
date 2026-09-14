@@ -1,5 +1,6 @@
 [package]
 name = "afteredit"
+default-run = "afteredit"
 version = "0.1.0"
 description = "AfterEdit - a native code editor with a real PTY"
 authors = ["Ryan <straticus1@gmail.com>"]

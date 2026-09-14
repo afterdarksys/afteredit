@@ -14,7 +14,9 @@
     "test:release": "playwright test --config playwright.release.config.ts",
     "test:infrastructure": "node scripts/test-infrastructure.mjs",
     "test:apple": "node --experimental-strip-types scripts/test-apple.mjs",
-    "test:apple:simulator": "node --experimental-strip-types scripts/test-apple-simulator.mjs"
+    "test:apple:simulator": "node --experimental-strip-types scripts/test-apple-simulator.mjs",
+    "cli:build": "cargo build --manifest-path src-tauri/Cargo.toml --bin afteredit-cli",
+    "test:cli": "python3 scripts/test-cli.py"
   },
   "dependencies": {
     "@codingame/monaco-vscode-api": "36.2.7",

@@ -265,6 +265,9 @@ pub fn dap_start(
     adapter: Adapter,
 ) -> Result<u64, String> {
     let root = crate::workspace::allowed(&workspace, Path::new(&root))?;
+    service_start(&state,root,adapter,move |message|{let _=app.emit("dap:event",message);})
+}
+pub(crate) fn service_start(state:&DapState,root:std::path::PathBuf,adapter:Adapter,emit:impl Fn(Value)+Send+'static)->Result<u64,String>{
     if !root.is_dir() {
         return Err("Select a project folder".into());
     }
@@ -277,7 +280,7 @@ pub fn dap_start(
     let id = state.sequence.fetch_add(1, Ordering::SeqCst);
     sessions.insert(id, session.clone());
     read_adapter(session, output, move |message| {
-        let _ = app.emit("dap:event", json!({"session":id,"message":message}));
+        emit(json!({"session":id,"message":message}));
     });
     Ok(id)
 }
@@ -308,11 +311,19 @@ pub async fn dap_request(
         "setVariable",
         "disconnect",
         "exceptionInfo",
+        "dataBreakpointInfo",
+        "setDataBreakpoints",
+        "readMemory",
+        "disassemble",
+        "stepBack",
+        "reverseContinue",
     ]
     .contains(&command.as_str())
     {
         return Err("Unsupported debug request".into());
     }
+    if command == "readMemory" && !arguments.get("count").and_then(Value::as_u64).is_some_and(|n| (1..=4096).contains(&n)) { return Err("Memory reads require 1–4096 bytes".into()); }
+    if command == "disassemble" && !arguments.get("instructionCount").and_then(Value::as_u64).is_some_and(|n| (1..=100).contains(&n)) { return Err("Disassembly requires 1–100 instructions".into()); }
     let session = state
         .sessions
         .lock()
@@ -370,18 +381,29 @@ mod integration_tests {
     }
     #[test]
     #[ignore = "requires Xcode lldb-dap and permission to debug a local test process"]
-    fn lldb_breakpoint_stack_variables_and_step() { smoke(false); }
+    fn lldb_breakpoint_stack_variables_and_step() {
+        smoke(false);
+    }
     #[test]
     #[ignore = "requires Xcode Swift and permission to debug a local Swift process"]
-    fn swift_breakpoint_stack_variables_and_step() { smoke(true); }
-    fn smoke(swift:bool) {
-        let root = std::env::temp_dir().join(format!("afteredit-dap-smoke-{}-{swift}", std::process::id()));
+    fn swift_breakpoint_stack_variables_and_step() {
+        smoke(true);
+    }
+    fn smoke(swift: bool) {
+        let root = std::env::temp_dir().join(format!(
+            "afteredit-dap-smoke-{}-{swift}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
-        let source = root.join(if swift{"main.swift"}else{"main.c"});
+        let source = root.join(if swift { "main.swift" } else { "main.c" });
         let program = root.join("program");
         std::fs::write(&source,if swift{"@inline(never)\nfunc runFixture() {\n var value = 41\n value += 1\n print(value)\n}\nrunFixture()\n"}else{"#include <stdio.h>\nint main(void) {\n volatile int value = 41;\n value += 1;\n printf(\"%d\\n\", value);\n return 0;\n}\n"}).unwrap();
         assert!(Command::new("xcrun")
-            .args(if swift{["swiftc","-g","-Onone"]}else{["clang", "-g", "-O0"]})
+            .args(if swift {
+                ["swiftc", "-g", "-Onone"]
+            } else {
+                ["clang", "-g", "-O0"]
+            })
             .arg(&source)
             .arg("-o")
             .arg(&program)
@@ -471,3 +493,11 @@ mod integration_tests {
         let _ = session.request("disconnect", json!({"terminateDebuggee":true}));
     }
 }
+
+pub(crate) fn service_request(state:&DapState,id:u64,command:&str,arguments:Value)->Result<Value,String>{
+ if !["initialize","launch","attach","setBreakpoints","setExceptionBreakpoints","configurationDone","threads","stackTrace","scopes","variables","continue","pause","next","stepIn","stepOut","evaluate","setVariable","disconnect","exceptionInfo","dataBreakpointInfo","setDataBreakpoints","readMemory","disassemble","stepBack","reverseContinue"].contains(&command){return Err("Unsupported debug request".into());}
+ if command=="readMemory"&&!arguments["count"].as_u64().is_some_and(|n|(1..=4096).contains(&n)){return Err("Read 1–4096 bytes".into());}
+ if command=="disassemble"&&!arguments["instructionCount"].as_u64().is_some_and(|n|(1..=100).contains(&n)){return Err("Read 1–100 instructions".into());}
+ let session=state.sessions.lock().map_err(error)?.get(&id).cloned().ok_or("Debugger is not connected")?;session.request(command,arguments)
+}
+pub(crate) fn service_stop(state:&DapState,id:u64){if let Ok(mut sessions)=state.sessions.lock(){if let Some(session)=sessions.remove(&id){session.stop();}}}

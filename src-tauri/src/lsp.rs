@@ -126,6 +126,9 @@ pub fn lsp_start(
     env: HashMap<String, String>,
 ) -> Result<Started, String> {
     let root = crate::workspace::allowed(&workspace, Path::new(&root))?;
+    service_start(&state,root,command,args,env,move |message| {let _=app.emit("lsp:notification",message);})
+}
+pub(crate) fn service_start(state:&LspState,root:std::path::PathBuf,command:String,args:Vec<String>,env:HashMap<String,String>,emit:impl Fn(Value)+Send+'static)->Result<Started,String>{
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     if sessions.len() >= 8 {
         return Err("Disconnect a language server before starting another (maximum 8)".into());
@@ -158,7 +161,7 @@ pub fn lsp_start(
     sessions.insert(id, session.clone());
     drop(sessions);
     read_server(session, output, move |message| {
-        let _ = app.emit("lsp:notification", json!({"session":id,"message":message}));
+        emit(json!({"session":id,"message":message}));
     });
     Ok(Started {
         id,
@@ -369,4 +372,15 @@ mod integration_tests {
             "Language server should publish diagnostics for the unsaved source buffer"
         );
     }
+}
+
+pub(crate) fn service_request(state:&LspState,id:u64,method:&str,params:Value)->Result<Value,String>{
+ if !["initialize","shutdown","workspace/symbol","textDocument/documentSymbol","textDocument/completion","textDocument/hover","textDocument/definition","textDocument/references","textDocument/rename","textDocument/formatting","textDocument/codeAction"].contains(&method){return Err("Unsupported LSP method".into());}
+ let server=state.sessions.lock().map_err(|e|e.to_string())?.get(&id).cloned().ok_or("Language server is not connected")?;
+ server.request(method.into(),params)
+}
+pub(crate) fn service_notify(state:&LspState,id:u64,method:&str,params:Value)->Result<(),String>{
+ if !["initialized","textDocument/didOpen","textDocument/didChange","textDocument/didSave","textDocument/didClose"].contains(&method){return Err("Unsupported LSP notification".into());}
+ let server=state.sessions.lock().map_err(|e|e.to_string())?.get(&id).cloned().ok_or("Language server is not connected")?;
+ server.send(&json!({"jsonrpc":"2.0","method":method,"params":params}))
 }

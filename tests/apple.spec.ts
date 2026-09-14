@@ -46,6 +46,16 @@ test('Apple command review tracks selection and executes explicit test destinati
  await expect(page.getByLabel('Apple test results')).toContainText('passedTests');
  const call=await page.evaluate(()=>(window as any).testCalls.find((c:any)=>c.command==='run_task'&&c.args.task.command==='/usr/bin/xcodebuild'));
  expect(call.args.task.args).toContain('platform=macOS,id=MAC');expect(call.args.task.args).toContain('Release');
+ await page.getByRole('button',{name:'Build workflows',exact:true}).click();
+ const monitor=page.getByRole('region',{name:'Run monitor',exact:true});
+ await expect(monitor).toContainText('/usr/bin/xcodebuild · succeeded');
+ await monitor.locator('summary').filter({hasText:'/usr/bin/xcodebuild'}).click();
+ await expect(monitor.getByRole('log')).toContainText('Apple fixture succeeded');
+ await page.getByRole('button',{name:'Files',exact:true}).click();
+ await page.getByRole('button',{name:'Build workflows',exact:true}).click();
+ await expect(monitor).toContainText('/usr/bin/xcodebuild · succeeded');
+ await monitor.getByRole('button',{name:'Clear completed runs'}).click();
+ await expect(monitor).toContainText('Run a configured task to start monitoring.');
 });
 test('failed Apple builds retain output and navigate source diagnostics',async({page})=>{
  await appleHarness(page);await page.evaluate(()=>{(window as any).appleExit=65;});
