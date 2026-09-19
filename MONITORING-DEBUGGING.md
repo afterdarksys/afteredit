@@ -11,6 +11,12 @@ session. Output is bounded to 200,000 bytes in the native runner. Terminal shell
 commands are separate. Clear completed runs only clears the selected project's
 completed entries.
 
+Confirmed mutations are also appended to a local operator journal under the app
+data directory (mode 0700, 500 entries): production confirms, Terraform/OpenTofu
+apply, git commits and agent edits. Entries name the action and context, not file
+contents, environment values or secrets. The Run monitor lists the current
+project's recent rows.
+
 ## Structured tests
 
 Choose the **Node structured tests** or **Go structured tests** build preset, or

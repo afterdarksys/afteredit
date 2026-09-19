@@ -73,6 +73,26 @@ test('declining a production challenge never records or starts a task', async ()
   } finally { await unmount(); }
 });
 
+test('operator journal is listed on the run monitor for this project', async () => {
+  const root = '/journal-ui';
+  mountEnvironment({
+    journal_list: [
+      { millis: 1, kind: 'confirm', action: 'kubectl delete', context: 'acme-prod', path: '', root },
+      { millis: 2, kind: 'commit', action: 'git commit', context: '', path: 'abc', root: '/other' },
+    ],
+  });
+  try {
+    const view = await render(RunMonitorPanel, { root });
+    await act(async () => { await Promise.resolve(); });
+    assert.match(view.text(), /Operator journal/);
+    assert.match(view.text(), /kubectl delete/);
+    assert.match(view.text(), /acme-prod/);
+    assert.doesNotMatch(view.text(), /git commit/);
+  } finally {
+    await unmount();
+  }
+});
+
 test('monitor updates mounted UI, filters failures and isolates project history', async () => {
   const root = '/monitor-ui';
   mountEnvironment();

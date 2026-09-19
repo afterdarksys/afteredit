@@ -22,6 +22,7 @@ function terraformTasks(command:string):Record<string,Task>{return {
  plan:{command,args:['plan','-input=false','-no-color','-out=plan.out']},
  'trace-plan':{command,args:['plan','-input=false','-no-color','-out=plan.out'],env:{TF_LOG:'TRACE'}},
  'show-plan':{command,args:['show','-json','plan.out']},
+ apply:{command,args:['apply','-input=false','-no-color','plan.out']},
  test:{command,args:['test','-no-color']},
 };}
 export const infrastructureTasks:Record<InfrastructureKind,Record<string,Task>>={Terraform:terraformTasks('terraform'),OpenTofu:terraformTasks('tofu'),Ansible:{

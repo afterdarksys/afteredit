@@ -43,6 +43,15 @@ export function policyDiagnostics(findings: PolicyFinding[]): InfrastructureDiag
     }));
 }
 
+/** Why Terraform apply is disabled, or undefined when it may run. */
+export function applyBlocked(report: PolicyReport | null, hasPolicies: boolean): string | undefined {
+  if (!hasPolicies) return undefined;
+  if (!report) return 'Evaluate policies against the current plan before applying.';
+  const errors = report.findings.filter(finding => finding.severity === 'error').length;
+  if (errors) return `Policy still reports ${errors} violation${errors === 1 ? '' : 's'}; apply is blocked.`;
+  return undefined;
+}
+
 /** One-line summary for the panel header. */
 export function summarize(report: PolicyReport): string {
   const errors = report.findings.filter(f => f.severity === 'error').length;

@@ -14,10 +14,12 @@ mod guard;
 mod history;
 mod hooks;
 mod http_client;
+mod journal;
 mod lsp_installer;
 mod policy;
 mod secrets;
 mod pty;
+mod pty_gate;
 mod toolpath;
 mod tasks;
 mod workspace;
@@ -43,6 +45,7 @@ pub fn run() {
         .manage(PtyState::default())
         .manage(editor_bridge::EditorBridge::default())
         .manage(workspace::WorkspaceState::default())
+        .manage(shared_workspace::ServiceJoins::default())
         .manage(tasks::TaskState::default())
         .manage(ai::AiState::default())
         .manage(dap::DapState::default())
@@ -54,6 +57,7 @@ pub fn run() {
             shared_workspace::service_start, shared_workspace::service_request,
             pty::spawn_pty,
             pty::pty_write,
+            pty::pty_confirm,
             pty::pty_resize,
             lsp_installer::check_and_install_lsp,
  context::active_context,
@@ -61,7 +65,8 @@ pub fn run() {
  history::history_list,history::history_read,
  hooks::precommit_hook_status,hooks::install_precommit_hook,
  http_client::http_send,
- editor_bridge::editor_release,
+ editor_bridge::editor_release,editor_bridge::editor_grant,
+ journal::journal_list,journal::journal_agent_edit,
  policy::policy_discover,policy::policy_evaluate,
  secrets::scan_buffer_secrets,
  formatter::format_source,formatter::list_formatters,formatter::formattable_languages,
@@ -113,7 +118,7 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 23] = [
+        let modules: [(&str, &str); 24] = [
             ("ai.rs", include_str!("ai.rs")),
             ("shared_workspace.rs", include_str!("shared_workspace.rs")),
             ("apple.rs", include_str!("apple.rs")),
@@ -126,6 +131,7 @@ mod registration_tests {
             ("hooks.rs", include_str!("hooks.rs")),
             ("http_client.rs", include_str!("http_client.rs")),
             ("git.rs", include_str!("git.rs")),
+            ("journal.rs", include_str!("journal.rs")),
             ("lsp.rs", include_str!("lsp.rs")),
             ("lsp_installer.rs", include_str!("lsp_installer.rs")),
             ("menu.rs", include_str!("menu.rs")),

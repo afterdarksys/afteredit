@@ -5,6 +5,10 @@ test('recognizes Terraform/OpenTofu and Ansible project conventions without clai
  assert.equal(infrastructureLanguage('/repo/main.tofu'),'hcl');assert.equal(infrastructureLanguage('/repo/secrets.tfvars.json'),'json');assert.equal(infrastructureLanguage('/repo/terraform.tfstate'),'json');assert.equal(infrastructureLanguage('/repo/roles/web/tasks/main.yml'),'ansible');assert.equal(infrastructureLanguage('/repo/compose.yaml'),undefined);
  assert.deepEqual(detectInfrastructure(['main.tf','roles']),['Terraform','OpenTofu','Ansible']);
  for(const tasks of Object.values(infrastructureTasks))for(const name of Object.keys(tasks))assert.ok(taskOrder(tasks,[name]).length);
+ assert.deepEqual(infrastructureTasks.Terraform.apply.args,['apply','-input=false','-no-color','plan.out']);
+ assert.deepEqual(infrastructureTasks.OpenTofu.apply.args,['apply','-input=false','-no-color','plan.out']);
+ assert.equal(infrastructureTasks.Terraform.apply.dependsOn,undefined);
+ assert.ok(!('apply' in infrastructureTasks.Ansible));
 });
 test('normalizes Terraform, TFLint and Ansible SARIF diagnostics and rejects outside paths',()=>{
  const terraform=parseInfrastructureDiagnostics(JSON.stringify({diagnostics:[{severity:'error',summary:'Unknown variable',range:{filename:'main.tf',start:{line:3,column:4}}}]}),'/repo','Terraform');assert.equal(terraform[0].path,'/repo/main.tf');assert.equal(terraform[0].line,3);

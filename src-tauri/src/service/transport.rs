@@ -1,5 +1,4 @@
 use super::*;
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
 use std::os::unix::{
@@ -9,15 +8,14 @@ use std::os::unix::{
 const MAX_FRAME: u64 = 8 * 1024 * 1024;
 pub fn default_socket(root: &Path) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(err)?;
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    root.hash(&mut hash);
+    let key = crate::history::fnv1a(root.to_string_lossy().as_bytes());
     #[cfg(unix)]
     let user = unsafe { libc::geteuid() };
     #[cfg(not(unix))]
     let user = 0;
     let dir = std::env::temp_dir().join(format!("afteredit-{user}"));
     private_directory(&dir)?;
-    Ok(dir.join(format!("{:x}.sock", hash.finish())))
+    Ok(dir.join(format!("{key:016x}.sock")))
 }
 fn private_directory(dir: &Path) -> Result<(), String> {
     if !dir.exists() {
@@ -288,5 +286,26 @@ pub fn ssh(endpoint: &str, method: &str, params: Value) -> Result<Value, String>
             .as_str()
             .unwrap_or("Remote service failed")
             .into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_name_is_stable_for_the_same_workspace() {
+        let root = std::env::temp_dir().join(format!("afteredit-socket-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let a = default_socket(&root).expect("socket path");
+        let b = default_socket(&root).expect("socket path");
+        assert_eq!(a, b);
+        assert!(a.file_name().unwrap().to_string_lossy().ends_with(".sock"));
+        assert_eq!(a.file_name().unwrap().to_string_lossy().len(), 16 + 5);
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_ne!(default_socket(&other).unwrap(), a);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

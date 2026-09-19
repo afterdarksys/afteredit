@@ -126,6 +126,14 @@ async fn ask_inner(
             "Supply a model, prompt and positive limits; output tokens must be 1–32768.".into(),
         );
     }
+    let secrets = crate::secrets::outbound_findings(
+        &request.prompt,
+        &request.context,
+        &request.instructions,
+    );
+    if !secrets.is_empty() {
+        return Err(crate::secrets::refuse_outbound(&secrets));
+    }
     let protocol = request.protocol.as_deref().unwrap_or("openai");
     let token_parameter = request.token_parameter.as_deref().unwrap_or("max_tokens");
     if !["openai", "anthropic"].contains(&protocol)

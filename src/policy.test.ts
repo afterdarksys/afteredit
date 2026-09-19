@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { policyDiagnostics, summarize, type PolicyFinding, type PolicyReport } from './policy.ts';
+import { applyBlocked, policyDiagnostics, summarize, type PolicyFinding, type PolicyReport } from './policy.ts';
 
 const finding = (over: Partial<PolicyFinding> = {}): PolicyFinding => ({
   severity: 'error', rule: 'terraform.s3', message: 'not encrypted',
@@ -32,6 +32,14 @@ test('severity is carried through', () => {
 
 const report = (findings: PolicyFinding[], unlocated = 0): PolicyReport =>
   ({ findings, unlocated, engine: '/usr/local/bin/opa', policies: '/w/policies', input: '/w/plan.json' });
+
+test('apply stays blocked until a clean evaluation', () => {
+  assert.equal(applyBlocked(null, false), undefined);
+  assert.match(applyBlocked(null, true) ?? '', /Evaluate policies/);
+  assert.match(applyBlocked(report([finding()]), true) ?? '', /1 violation/);
+  assert.equal(applyBlocked(report([finding({ severity: 'warning' })]), true), undefined);
+  assert.equal(applyBlocked(report([]), true), undefined);
+});
 
 test('summary counts by severity', () => {
   assert.equal(summarize(report([])), 'No policy violations');

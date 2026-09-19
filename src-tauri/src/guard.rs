@@ -84,6 +84,13 @@ pub fn is_destructive(program: &str, args: &[String]) -> bool {
     destructive_verb(program, args).is_some()
 }
 
+/// Terraform/OpenTofu apply or destroy: reviewed-apply plus the production gate.
+pub fn is_infra_apply(program: &str, args: &[String]) -> bool {
+    let program = program_name(program);
+    matches!(program, "terraform" | "tofu")
+        && destructive_verb(program, args).is_some_and(|verb| verb == "apply" || verb == "destroy")
+}
+
 /// The challenge to answer before this command may run, if any.
 ///
 /// `context` is what the command would target and `production` whether that
@@ -130,12 +137,18 @@ pub fn challenge_for_task(root: Option<&std::path::Path>, command: &str, args: &
 }
 
 #[tauri::command]
-pub async fn task_challenge(root: Option<String>, command: String, args: Vec<String>) -> Option<Challenge> {
-    tauri::async_runtime::spawn_blocking(move || {
-        challenge_for_task(root.as_deref().map(std::path::Path::new), &command, &args)
+pub async fn task_challenge(
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
+    root: Option<String>,
+    command: String,
+    args: Vec<String>,
+) -> Result<Option<Challenge>, String> {
+    let root = root.and_then(|path| crate::workspace::allowed(&state, std::path::Path::new(&path)).ok());
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        challenge_for_task(root.as_deref(), &command, &args)
     })
     .await
-    .unwrap_or(None)
+    .unwrap_or(None))
 }
 
 #[cfg(test)]
@@ -144,6 +157,14 @@ mod tests {
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn terraform_apply_is_the_reviewed_apply_shape() {
+        assert!(is_infra_apply("terraform", &args("apply -input=false plan.out")));
+        assert!(is_infra_apply("/opt/homebrew/bin/tofu", &args("destroy")));
+        assert!(!is_infra_apply("terraform", &args("plan -out=plan.out")));
+        assert!(!is_infra_apply("kubectl", &args("apply -f deploy.yaml")));
     }
 
     #[test]

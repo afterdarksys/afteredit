@@ -5,6 +5,7 @@
 //! the shell. So everything lives in managed state, not in `spawn_pty` locals.
 
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 
@@ -13,17 +14,32 @@ use base64::Engine as _;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::guard::{answered, Challenge};
+use crate::pty_gate::{challenge_for_line, LineTracker, Step};
+
 /// Emitted for every chunk read off the pty, base64 encoded.
 const EVENT_OUTPUT: &str = "pty:output";
 /// Emitted once, with the shell's exit code, when the session ends.
 const EVENT_EXIT: &str = "pty:exit";
+/// Enter was withheld; the UI must answer with `pty_confirm`.
+const EVENT_CHALLENGE: &str = "pty:challenge";
 
 const READ_BUF: usize = 8192;
+
+struct HeldEnter {
+    newline: Vec<u8>,
+    rest: Vec<u8>,
+    generation: u64,
+    challenge: Option<Challenge>,
+}
 
 struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    tracker: LineTracker,
+    held: Option<HeldEnter>,
+    generation: u64,
 }
 
 #[derive(Default)]
@@ -125,19 +141,196 @@ pub fn spawn_pty(app: AppHandle, state: State<'_, PtyState>, rows: u16, cols: u1
         master: pair.master,
         writer,
         killer,
+        tracker: LineTracker::default(),
+        held: None,
+        generation: 0,
     });
     Ok(true)
 }
 
-#[tauri::command]
-pub fn pty_write(state: State<'_, PtyState>, data: String) -> Result<(), String> {
-    let mut slot = state.0.lock().map_err(lock_err)?;
-    let session = slot.as_mut().ok_or("no active pty session")?;
+fn write_raw(session: &mut PtySession, bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
     session
         .writer
-        .write_all(data.as_bytes())
+        .write_all(bytes)
         .and_then(|()| session.writer.flush())
         .map_err(|e| format!("pty write failed: {e}"))
+}
+
+fn ingest(session: &mut PtySession, data: &str) -> Result<Option<(String, u64)>, String> {
+    if data.is_empty() {
+        return Ok(None);
+    }
+    if let Some(held) = session.held.as_mut() {
+        if data.as_bytes().contains(&0x03) {
+            session.held = None;
+            session.tracker.reset();
+            write_raw(session, &[0x03])?;
+            return Ok(None);
+        }
+        held.rest.extend_from_slice(data.as_bytes());
+        return Ok(None);
+    }
+    match session.tracker.feed(data) {
+        Step::Pass(bytes) => {
+            write_raw(session, &bytes)?;
+            Ok(None)
+        }
+        Step::Hold {
+            passed,
+            line,
+            newline,
+            rest,
+        } => {
+            write_raw(session, &passed)?;
+            session.generation += 1;
+            let generation = session.generation;
+            session.held = Some(HeldEnter {
+                newline,
+                rest,
+                generation,
+                challenge: None,
+            });
+            Ok(Some((line, generation)))
+        }
+    }
+}
+
+fn resolve_root(
+    workspace: &tauri::State<'_, crate::workspace::WorkspaceState>,
+    root: Option<String>,
+) -> Option<PathBuf> {
+    root.and_then(|path| crate::workspace::allowed(workspace, std::path::Path::new(&path)).ok())
+}
+
+async fn gate_pending(
+    app: &AppHandle,
+    state: &State<'_, PtyState>,
+    mut line: String,
+    mut generation: u64,
+    root: Option<PathBuf>,
+) -> Result<(), String> {
+    loop {
+        let probe_root = root.clone();
+        let probe_line = line.clone();
+        let challenge = tauri::async_runtime::spawn_blocking(move || {
+            challenge_for_line(probe_root.as_deref(), &probe_line)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let next = {
+            let mut slot = state.0.lock().map_err(lock_err)?;
+            let session = slot.as_mut().ok_or("no active pty session")?;
+            let Some(held) = session.held.as_mut() else {
+                return Ok(());
+            };
+            if held.generation != generation {
+                return Ok(());
+            }
+            if let Some(challenge) = challenge {
+                held.challenge = Some(challenge.clone());
+                let _ = app.emit(EVENT_CHALLENGE, challenge);
+                return Ok(());
+            }
+            let held = session.held.take().expect("held checked above");
+            write_raw(session, &held.newline)?;
+            if held.rest.is_empty() {
+                return Ok(());
+            }
+            let rest = String::from_utf8_lossy(&held.rest).into_owned();
+            ingest(session, &rest)?
+        };
+        match next {
+            None => return Ok(()),
+            Some((next_line, next_gen)) => {
+                line = next_line;
+                generation = next_gen;
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn pty_write(
+    app: AppHandle,
+    state: State<'_, PtyState>,
+    workspace: State<'_, crate::workspace::WorkspaceState>,
+    data: String,
+    root: Option<String>,
+) -> Result<(), String> {
+    let root = resolve_root(&workspace, root);
+    let pending = {
+        let mut slot = state.0.lock().map_err(lock_err)?;
+        let session = slot.as_mut().ok_or("no active pty session")?;
+        ingest(session, &data)?
+    };
+    if let Some((line, generation)) = pending {
+        gate_pending(&app, &state, line, generation, root).await?;
+    }
+    Ok(())
+}
+
+/// Answer a withheld Enter. `None` cancels and sends Ctrl+C so the shell
+/// drops the line that is still sitting in readline.
+#[tauri::command]
+pub async fn pty_confirm(
+    app: AppHandle,
+    state: State<'_, PtyState>,
+    workspace: State<'_, crate::workspace::WorkspaceState>,
+    typed: Option<String>,
+    root: Option<String>,
+) -> Result<(), String> {
+    let root = resolve_root(&workspace, root);
+    let (pending, accepted) = {
+        let mut slot = state.0.lock().map_err(lock_err)?;
+        let session = slot.as_mut().ok_or("no active pty session")?;
+        let Some(held) = session.held.take() else {
+            return Ok(());
+        };
+        let Some(challenge) = held.challenge else {
+            // Probe still in flight; never submit an unreviewed line.
+            session.tracker.reset();
+            write_raw(session, &[0x03])?;
+            return Ok(());
+        };
+        if typed.is_none() || !answered(&challenge, typed.as_deref()) {
+            session.tracker.reset();
+            write_raw(session, &[0x03])?;
+            return Ok(());
+        }
+        write_raw(session, &held.newline)?;
+        let rest = if held.rest.is_empty() {
+            None
+        } else {
+            let rest = String::from_utf8_lossy(&held.rest).into_owned();
+            ingest(session, &rest)?
+        };
+        (rest, challenge)
+    };
+    let apply = crate::guard::is_infra_apply(
+        accepted.action.split_whitespace().next().unwrap_or(""),
+        &accepted
+            .action
+            .split_whitespace()
+            .skip(1)
+            .map(String::from)
+            .collect::<Vec<_>>(),
+    );
+    crate::journal::record_app(
+        &app,
+        if apply { "apply" } else { "confirm" },
+        &accepted.action,
+        &accepted.expected,
+        "",
+        &root.as_ref().map(|path| path.display().to_string()).unwrap_or_default(),
+    );
+    if let Some((line, generation)) = pending {
+        gate_pending(&app, &state, line, generation, root).await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

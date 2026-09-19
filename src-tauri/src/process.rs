@@ -19,8 +19,14 @@ pub(crate) fn run(mut command:Command, timeout:Duration) -> Result<Output,String
         if start.elapsed()>timeout{break Err("Tool timed out.".into());}
         std::thread::sleep(Duration::from_millis(20));
     };
-    #[cfg(unix)] unsafe {libc::kill(-(child.id() as i32),libc::SIGKILL);}
-    if result.is_err(){let _=child.kill();}
+    if result.is_err(){
+        #[cfg(unix)] unsafe {
+            // SAFETY: `child` is still the process-group leader we spawned
+            // with `process_group(0)` and has not been reaped.
+            libc::kill(-(child.id() as i32),libc::SIGKILL);
+        }
+        let _=child.kill();
+    }
     let _=child.wait();
     let stdout=out.join().map_err(|_|"Output reader failed")??;
     let stderr=err.join().map_err(|_|"Error reader failed")??;

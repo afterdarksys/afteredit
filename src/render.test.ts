@@ -38,6 +38,23 @@ test('the bridge banner names the waiting file and offers both outcomes', async 
   });
 });
 
+test('an out-of-project editor request must be opened before it can be saved', async () => {
+  await withDom({}, async () => {
+    const pressed: string[] = [];
+    const view = await render(EditorBridgeBanner, {
+      pending: { id: '1-2', path: '/tmp/kubectl-edit-9.yaml', outsideWorkspace: true },
+      dirty: false,
+      onOpenOutside: () => pressed.push('open'),
+      onFinish: () => pressed.push('finish'),
+      onAbort: () => {},
+    });
+    assert.match(view.text(), /outside the project/);
+    assert.match(view.text(), /Open this file/);
+    await view.click(view.all('button')[0]);
+    assert.deepEqual(pressed, ['open']);
+  });
+});
+
 test('the bridge banner buttons map to different outcomes', async () => {
   await withDom({}, async () => {
     const pressed: string[] = [];

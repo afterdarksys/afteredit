@@ -169,8 +169,12 @@ pub async fn run_task(
     confirmation: Option<String>,
     request_id: Option<String>,
 ) -> Result<TaskResult, String> {
+    let project = crate::workspace::allowed(&workspace, std::path::Path::new(&root))?;
+    if crate::guard::is_infra_apply(&task.command, &task.args) {
+        crate::policy::require_apply(&project)?;
+    }
     if let Some(challenge) = crate::guard::challenge_for_task(
-        Some(std::path::Path::new(&root)),
+        Some(&project),
         &task.command,
         &task.args,
     ) {
@@ -180,6 +184,27 @@ pub async fn run_task(
                 challenge.action, challenge.expected
             ));
         }
+        crate::journal::record_app(
+            &app,
+            if crate::guard::is_infra_apply(&task.command, &task.args) {
+                "apply"
+            } else {
+                "confirm"
+            },
+            &challenge.action,
+            &challenge.expected,
+            "",
+            &project.display().to_string(),
+        );
+    } else if crate::guard::is_infra_apply(&task.command, &task.args) {
+        crate::journal::record_app(
+            &app,
+            "apply",
+            &format!("{} apply", task.command.rsplit('/').next().unwrap_or(&task.command)),
+            "",
+            "",
+            &project.display().to_string(),
+        );
     }
     let directory = crate::workspace::task_directory(workspace, root, cwd)?;
     let state = state.inner().clone();
@@ -273,10 +298,10 @@ pub(crate) fn execute(
     if let Ok(path) = std::env::join_paths(paths) {
         cmd.env("PATH", path);
     }
+    crate::toolpath::apply_user_env(&mut cmd, task.env.unwrap_or_default())?;
 
     cmd.args(&task.args)
         .current_dir(directory)
-        .envs(task.env.unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -554,5 +579,20 @@ mod tests {
         )
         .unwrap_err()
         .contains("already running"));
+    }
+
+    #[test]
+    fn task_env_cannot_replace_path() {
+        let mut t = task("exit 0");
+        t.env = Some(std::collections::HashMap::from([("PATH".into(), "/tmp/evil".into())]));
+        let err = execute(
+            t,
+            std::env::temp_dir(),
+            TaskState::default(),
+            "".into(),
+            Arc::new(|_| {}),
+        )
+        .unwrap_err();
+        assert!(err.contains("PATH"), "{err}");
     }
 }

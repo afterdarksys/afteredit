@@ -28,7 +28,7 @@ function decodeChunk(encoded: string): Uint8Array {
   return bytes;
 }
 
-export default function TerminalPanel({ theme }: { theme: OsTheme }) {
+export default function TerminalPanel({ theme, root }: { theme: OsTheme; root?: string }) {
   const accessibility = useAccessibility();
   const accessRef = useRef(accessibility); accessRef.current = accessibility;
   const [transcript,setTranscript] = useState<string | null>(null);
@@ -49,6 +49,8 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
   const termRef = useRef<XTerm | null>(null);
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const rootRef = useRef(root);
+  rootRef.current = root;
 
   const reviewRef=useRef(reviewOutput);reviewRef.current=reviewOutput;
   useEffect(()=>{
@@ -57,7 +59,7 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
       if(!term)return;
       if(command==='review')reviewRef.current();
       else if(command==='clear'){term.clear();setTerminalStatus('Terminal scrollback cleared.');term.focus();}
-      else if(command==='interrupt'){void invoke('pty_write',{data:'\u0003'}).catch(e=>setTerminalStatus(String(e)));term.focus();}
+      else if(command==='interrupt'){void invoke('pty_write',{data:'\u0003',root:rootRef.current||null}).catch(e=>setTerminalStatus(String(e)));term.focus();}
       else if(command==='focus')term.focus();
     };
     window.addEventListener('afteredit:terminal-command',handle);
@@ -162,7 +164,7 @@ export default function TerminalPanel({ theme }: { theme: OsTheme }) {
     frame = requestAnimationFrame(startWhenLaidOut);
 
     const input = term.onData((data) => {
-      void invoke("pty_write", { data }).catch((error) => {
+      void invoke("pty_write", { data, root: rootRef.current || null }).catch((error) => {
         term.writeln(`\r\n\x1b[31m[write failed: ${String(error)}]\x1b[0m`);
       });
     });

@@ -12,10 +12,14 @@ export default function PolicySection({
   root,
   onDiagnostics,
   onOpen,
+  onReport,
+  onSources,
 }: {
   root: string;
   onDiagnostics: (rows: InfrastructureDiagnostic[]) => void;
   onOpen: (path: string, line: number) => void;
+  onReport?: (report: PolicyReport | null) => void;
+  onSources?: (sources: PolicySources | null) => void;
 }) {
   const [sources, setSources] = useState<PolicySources | null>(null);
   const [policies, setPolicies] = useState('');
@@ -26,12 +30,14 @@ export default function PolicySection({
 
   useEffect(() => {
     setSources(null); setReport(null); setStatus(''); setPolicies(''); setInput('');
+    onReport?.(null); onSources?.(null);
     if (!root || !isTauri()) return;
     let stale = false;
     void invoke<PolicySources>('policy_discover', { root })
       .then(found => {
         if (stale) return;
         setSources(found);
+        onSources?.(found);
         setPolicies(found.policy_dirs[0] ?? '');
         setInput(found.inputs[0] ?? '');
       })
@@ -44,10 +50,12 @@ export default function PolicySection({
     try {
       const result = await invoke<PolicyReport>('policy_evaluate', { root, policies, input });
       setReport(result);
+      onReport?.(result);
       onDiagnostics(policyDiagnostics(result.findings));
       setStatus(summarize(result));
     } catch (e) {
       setReport(null);
+      onReport?.(null);
       onDiagnostics([]);
       setStatus(String(e));
     } finally {
@@ -92,7 +100,7 @@ export default function PolicySection({
         <button type="button" disabled={busy || !policies || !input || !sources?.opa} onClick={() => void evaluate()}>
           {busy ? 'Evaluating…' : 'Evaluate policies'}
         </button>
-        <button type="button" disabled={busy || !report} onClick={() => { setReport(null); onDiagnostics([]); setStatus(''); }}>
+        <button type="button" disabled={busy || !report} onClick={() => { setReport(null); onReport?.(null); onDiagnostics([]); setStatus(''); }}>
           Clear
         </button>
       </div>

@@ -117,7 +117,14 @@ Remote transport is implemented through SSH, requiring an installed `afteredit` 
 afteredit --connect ssh://my-server/absolute/project --plain
 ```
 
-The GUI accepts the same endpoint. SSH uses existing key authentication and known-host configuration, with batch mode and connection/keepalive timeouts. Set up authentication separately; the GUI does not prompt for SSH credentials. The SSH gateway forwards protocol messages through `afteredit --stdio`, keeping the workspace and tool processes remote. This transport has not yet been validated against a real remote host.
+The GUI Shared workspace panel only talks to a Unix socket **this window started**.
+`ssh://` and other remote endpoints from the webview are refused. Use the CLI
+`--connect ssh://…` path for remote workspaces. SSH uses existing key
+authentication and known-host configuration, with batch mode and connection/keepalive
+timeouts. Set up authentication separately; the GUI does not prompt for SSH
+credentials. The SSH gateway forwards protocol messages through `afteredit --stdio`,
+keeping the workspace and tool processes remote. This transport has not yet been
+validated against a real remote host.
 
 ## Prototype boundaries and recovery
 

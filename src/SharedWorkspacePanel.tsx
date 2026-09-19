@@ -73,7 +73,7 @@ export default function SharedWorkspacePanel({ root, onDirty }: { root: string; 
         const value = await invoke<{ endpoint: string; capabilities: Capabilities }>('service_start', { root });
         setEndpoint(value.endpoint); setConnected(value.endpoint); setCaps(value.capabilities); setBuffer(undefined); setDraft(''); setRemote(undefined); setStatus('Workspace service ready.');
       })}>Start or join current workspace</button>
-      <label>Session endpoint<input value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="/path/session.sock or ssh://host/workspace" /></label>
+      <label>Session endpoint<input value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="Socket from Start or join (SSH is CLI-only)" /></label>
       <button disabled={!isTauri() || !endpoint || busy || localChanges} onClick={() => void act(async () => {
         const value = await call<Capabilities>('capabilities', {}, endpoint);
         if (value.protocol !== 1) throw new Error('Unsupported service protocol');

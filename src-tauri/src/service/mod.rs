@@ -628,8 +628,12 @@ impl Service {
             let args: Vec<String> =
                 serde_json::from_value(task.get("args").cloned().unwrap_or(json!([])))
                     .map_err(err)?;
+            let command = text(task, "command")?;
+            if crate::guard::is_infra_apply(command, &args) {
+                crate::policy::require_apply(&self.root)?;
+            }
             if let Some(challenge) =
-                crate::guard::challenge_for_task(Some(&self.root), text(task, "command")?, &args)
+                crate::guard::challenge_for_task(Some(&self.root), command, &args)
             {
                 if !crate::guard::answered(&challenge, p["confirmation"].as_str()) {
                     return Err(format!(

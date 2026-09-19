@@ -135,8 +135,8 @@ pub(crate) fn service_start(state:&LspState,root:std::path::PathBuf,command:Stri
     }
     let mut cmd = Command::new(command);
     if let Ok(path)=std::env::join_paths(crate::toolpath::search_dirs()){cmd.env("PATH",path);}
+    crate::toolpath::apply_user_env(&mut cmd, env)?;
     cmd.args(args)
-        .envs(env)
         .current_dir(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -16,6 +16,7 @@
 //!   4. the GUI writes an exit code there when the tab closes, which is what
 //!      `git commit` reads to decide whether to proceed or abort
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -33,7 +34,12 @@ pub const EVENT_REQUEST: &str = "editor:request";
 const HELPER: &str = include_str!("../afteredit-edit.sh");
 
 #[derive(Default)]
-pub struct EditorBridge(Mutex<Option<Session>>);
+pub struct EditorBridge {
+    session: Mutex<Option<Session>>,
+    /// Live helper requests waiting on a grant. XSS cannot invent a path;
+    /// it can only confirm one the helper already named.
+    pending: Mutex<HashMap<String, PathBuf>>,
+}
 
 pub struct Session {
     dir: PathBuf,
@@ -44,6 +50,8 @@ pub struct Session {
 struct Request {
     id: String,
     path: String,
+    #[serde(rename = "outsideWorkspace")]
+    outside_workspace: bool,
 }
 
 fn error(e: impl std::fmt::Display) -> String {
@@ -54,7 +62,7 @@ impl EditorBridge {
     /// Environment for the pty so intercepted commands reach us. Empty when
     /// the bridge could not start, which simply leaves the user with vi.
     pub fn environment(&self) -> Vec<(String, String)> {
-        let guard = match self.0.lock() {
+        let guard = match self.session.lock() {
             Ok(guard) => guard,
             Err(_) => return Vec::new(),
         };
@@ -75,16 +83,19 @@ impl EditorBridge {
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
             return Err("invalid editor request id".into());
         }
-        let guard = self.0.lock().map_err(error)?;
+        let guard = self.session.lock().map_err(error)?;
         let session = guard.as_ref().ok_or("the editor bridge is not running")?;
         Ok(session.dir.join("release").join(id))
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.session.lock() {
             if let Some(session) = guard.take() {
                 let _ = fs::remove_dir_all(&session.dir);
             }
+        }
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.clear();
         }
     }
 }
@@ -92,7 +103,7 @@ impl EditorBridge {
 /// Create the session directory, write the helper, and start listening.
 pub fn start(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<EditorBridge>();
-    if state.0.lock().map_err(error)?.is_some() {
+    if state.session.lock().map_err(error)?.is_some() {
         return Ok(());
     }
 
@@ -123,7 +134,7 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     let listener = app.clone();
     thread::spawn(move || listen(listener, requests));
 
-    *state.0.lock().map_err(error)? = Some(Session { dir, helper });
+    *state.session.lock().map_err(error)? = Some(Session { dir, helper });
     Ok(())
 }
 
@@ -139,24 +150,47 @@ fn listen(app: AppHandle, requests: PathBuf) {
             let Some((id, path)) = line.split_once('\t') else {
                 continue;
             };
-            let request = Request { id: id.to_string(), path: path.to_string() };
+            let Ok(canonical) = Path::new(path).canonicalize() else {
+                continue;
+            };
+            if !canonical.is_file() {
+                continue;
+            }
 
-            // The user asked for this file by running the command themselves,
-            // in our own terminal. That is the same authority as picking it in
-            // the open dialog, so grant it -- kubectl edit works on a temp file
-            // outside every project root and would be refused otherwise.
-            if let Ok(canonical) = Path::new(path).canonicalize() {
+            let inside = app
+                .state::<WorkspaceState>()
+                .inner()
+                .0
+                .lock()
+                .map(|access| {
+                    access.files.contains(&canonical)
+                        || access.roots.iter().any(|root| canonical.starts_with(root))
+                })
+                .unwrap_or(false);
+
+            if let Ok(mut pending) = app.state::<EditorBridge>().pending.lock() {
+                pending.insert(id.to_string(), canonical.clone());
+            }
+
+            if inside {
                 if let Ok(mut access) = app.state::<WorkspaceState>().inner().0.lock() {
                     access.files.insert(canonical);
                 }
+                if let Ok(existing) = fs::read_to_string(path) {
+                    crate::history::snapshot(
+                        &app,
+                        Path::new(path),
+                        &existing,
+                        crate::history::Label::BridgeOpen,
+                    );
+                }
             }
 
-            // The whole reason local history exists: this temp file is
-            // deleted the moment the command returns.
-            if let Ok(existing) = fs::read_to_string(path) {
-                crate::history::snapshot(&app, Path::new(path), &existing, crate::history::Label::BridgeOpen);
-            }
-
+            let request = Request {
+                id: id.to_string(),
+                path: path.to_string(),
+                outside_workspace: !inside,
+            };
             if app.emit(EVENT_REQUEST, request).is_err() {
                 return;
             }
@@ -178,8 +212,41 @@ pub fn editor_release(
     if !path.exists() {
         return Err("that editor request is no longer waiting".into());
     }
+    if let Ok(mut pending) = state.pending.lock() {
+        pending.remove(&id);
+    }
     let mut pipe = fs::OpenOptions::new().write(true).open(&path).map_err(error)?;
     writeln!(pipe, "{code}").map_err(error)
+}
+
+/// Confirm an out-of-project `$EDITOR` path the helper already requested.
+///
+/// Threats: XSS cannot name an arbitrary file; the path must already be in
+/// `pending` from the helper fifo. Does NOT protect against a compromised
+/// helper process that names a path, then a user who clicks Open.
+#[tauri::command]
+pub fn editor_grant(
+    workspace: tauri::State<'_, WorkspaceState>,
+    state: tauri::State<'_, EditorBridge>,
+    id: String,
+) -> Result<String, String> {
+    let path = {
+        let pending = state.pending.lock().map_err(error)?;
+        pending
+            .get(&id)
+            .cloned()
+            .ok_or("that editor request is no longer waiting")?
+    };
+    if !path.is_file() {
+        return Err("Editor bridge can only open a file".into());
+    }
+    workspace
+        .0
+        .lock()
+        .map_err(error)?
+        .files
+        .insert(path.clone());
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Is a process still around? `kill -0` tests for existence without signalling.
@@ -238,10 +305,13 @@ mod tests {
 
     #[test]
     fn request_ids_cannot_escape_the_release_directory() {
-        let bridge = EditorBridge(Mutex::new(Some(Session {
-            dir: PathBuf::from("/tmp/afteredit-test"),
-            helper: PathBuf::from("/tmp/afteredit-test/afteredit-edit"),
-        })));
+        let bridge = EditorBridge {
+            session: Mutex::new(Some(Session {
+                dir: PathBuf::from("/tmp/afteredit-test"),
+                helper: PathBuf::from("/tmp/afteredit-test/afteredit-edit"),
+            })),
+            pending: Mutex::new(HashMap::new()),
+        };
         for bad in ["../../etc/passwd", "a/b", "", "..", "id with space", "id;rm"] {
             assert!(bridge.release_path(bad).is_err(), "{bad:?} should be rejected");
         }
@@ -281,10 +351,13 @@ mod tests {
 
     #[test]
     fn environment_points_every_editor_variable_at_the_helper() {
-        let bridge = EditorBridge(Mutex::new(Some(Session {
-            dir: PathBuf::from("/tmp/afteredit-test"),
-            helper: PathBuf::from("/tmp/afteredit-test/afteredit-edit"),
-        })));
+        let bridge = EditorBridge {
+            session: Mutex::new(Some(Session {
+                dir: PathBuf::from("/tmp/afteredit-test"),
+                helper: PathBuf::from("/tmp/afteredit-test/afteredit-edit"),
+            })),
+            pending: Mutex::new(HashMap::new()),
+        };
         let environment = bridge.environment();
         let keys: Vec<&str> = environment.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"GIT_EDITOR") && keys.contains(&"KUBE_EDITOR") && keys.contains(&"EDITOR"));

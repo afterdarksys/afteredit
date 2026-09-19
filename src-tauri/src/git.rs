@@ -134,9 +134,13 @@ fn commit_snapshot(root:&Path,message:&str,tree:&str)->Result<String,String>{
  let _=std::fs::remove_file(temporary);result
 }
 #[tauri::command]
-pub async fn git_commit(state:tauri::State<'_,WorkspaceState>,root:String,message:String,tree:String)->Result<String,String>{
+pub async fn git_commit(app:tauri::AppHandle,state:tauri::State<'_,WorkspaceState>,root:String,message:String,tree:String)->Result<String,String>{
  let root=repository(&state,&root)?;
- tauri::async_runtime::spawn_blocking(move||commit_snapshot(&root,&message,&tree)).await.map_err(|e|e.to_string())?
+ let recorded_root=root.display().to_string();
+ let recorded_tree=tree.clone();
+ let result=tauri::async_runtime::spawn_blocking(move||commit_snapshot(&root,&message,&tree)).await.map_err(|e|e.to_string())??;
+ crate::journal::record_app(&app,"commit","git commit","",&recorded_tree,&recorded_root);
+ Ok(result)
 }
 #[cfg(test)]
 mod mutation_tests{

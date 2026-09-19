@@ -30,7 +30,7 @@ export default function ApplePanel({root,dirty,onOpen,onProblems,onDebug,active,
  const reviewHeading=useRef<HTMLHeadingElement>(null);
  useEffect(()=>{if(plan)reviewHeading.current?.focus();},[plan]);
  const running=useRef(false),cancelled=useRef(false);
- useEffect(()=>()=>{cancelled.current=true;},[]);
+ useEffect(()=>()=>{cancelled.current=true;if(running.current)void invoke('cancel_task').catch(()=>{});},[]);
  function prepare(action:'build'|'test'){setPlan(null);try{setPlan(appleBuild(selection,action,Date.now().toString(36),signing));setStatus('Review the commands, then run.');}catch(e){setStatus(String(e));}}
  async function execute(){if(!plan||running.current)return;running.current=true;cancelled.current=false;setBusy(true);setOutput('');setSummary('');setResultPath('');setProblems([]);onProblems([]);let off=()=>{},combined='';try{
   if(plan.exportReview){const current=await invoke<string>('apple_query',{root,query:{kind:'export-options',path:plan.exportReview.path}});if(current!==plan.exportReview.text)throw new Error('Export options changed. Prepare and review the export again.');}

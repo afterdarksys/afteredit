@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import {invoke} from '@tauri-apps/api/core';
+import {invoke,isTauri} from '@tauri-apps/api/core';
 import {runMonitor,type MonitoredRun} from './runMonitor';
 import {runTask} from './taskRunner';
 import {taskOrder,type Task} from './workflows';
@@ -11,12 +11,14 @@ import OutputLog from './OutputLog';
 export default function RunMonitorPanel({root,tasks={},configured={},allowed=false,onDebug}:{root:string;tasks?:Record<string,Task>;configured?:Record<string,DebugConfig>;allowed?:boolean;onDebug?:(config:DebugConfig,origin:string)=>void}){
  const snapshot=useSyncExternalStore(runMonitor.subscribe,runMonitor.getSnapshot);
  const [now,setNow]=useState(Date.now),[failuresOnly,setFailuresOnly]=useState(false),[attempts,setAttempts]=useState(1),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+ const [journal,setJournal]=useState<Array<{millis:number;kind:string;action:string;context:string;path:string;root:string}>>([]);
  const [review,setReview]=useState<{run:MonitoredRun;steps:{name:string;task:Task}[];config?:DebugConfig;fingerprint:string}>();
  const generation=useRef(0), gate=useRef(allowed), fingerprint=JSON.stringify([root,tasks,configured]);gate.current=allowed;
  const latest=useRef(fingerprint);latest.current=fingerprint;
  const runs=snapshot.filter(run=>run.root===root),active=runs.some(run=>run.status==='running');
  useEffect(()=>{if(!active)return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[active]);
  useEffect(()=>{setReview(undefined);generation.current++;setBusy(false);return()=>{generation.current++;};},[root]);
+ useEffect(()=>{if(!isTauri()){setJournal([]);return;}let stale=false;void invoke<typeof journal>('journal_list').then(rows=>{if(!stale)setJournal(rows.filter(entry=>!entry.root||entry.root===root).slice(0,50));}).catch(()=>{if(!stale)setJournal([]);});return()=>{stale=true;};},[root,runs.length,runs[0]?.status]);
  const failures=(run:MonitoredRun)=>!['running','succeeded'].includes(run.status);
  const visible=runs.filter(run=>!failuresOnly||failures(run));
  function prepare(run:MonitoredRun,test?:TestCase,debug=false){try{
@@ -37,6 +39,7 @@ export default function RunMonitorPanel({root,tasks={},configured={},allowed=fal
   }}catch(e){setError(String(e));}finally{if(mark===generation.current){setBusy(false);setReview(undefined);}}}
  const stop=()=>{generation.current++;setBusy(false);const run=runMonitor.getSnapshot().find(r=>r.root===root&&r.status==='running'&&r.parentId===review?.run.id);if(run?.nativeId!==undefined)void invoke('cancel_task',{runId:run.nativeId}).catch(e=>setError(String(e)));};
  return <section aria-label="Run monitor" className="run-monitor"><h2>Run monitor</h2><p>Live task output and the last 20 completed commands for this app session, filtered by project.</p>
+ {journal.length>0&&<details><summary>Operator journal ({journal.length})</summary><p>Confirmed mutations recorded on this machine. No file contents, environment values or secrets.</p><ul>{journal.map((entry,index)=><li key={`${entry.millis}-${index}`}>{new Date(entry.millis).toLocaleString()} · {entry.kind} · {entry.action}{entry.context?` · ${entry.context}`:''}{entry.path?` · ${entry.path}`:''}</li>)}</ul></details>}
  <p role="status">{runs.filter(r=>r.status==='running').length} active · {runs.filter(r=>r.status==='succeeded').length} succeeded · {runs.filter(failures).length} failed / errors</p>
  <label className="check"><input type="checkbox" checked={failuresOnly} onChange={e=>setFailuresOnly(e.target.checked)}/>Show failures only</label><button disabled={!runs.some(r=>r.status!=='running')} onClick={()=>runMonitor.clear(root)}>Clear completed runs</button>
  <p role="alert">{error}</p>

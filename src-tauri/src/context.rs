@@ -154,10 +154,20 @@ pub fn target(root: Option<&Path>) -> (Option<String>, bool) {
 }
 
 #[tauri::command]
-pub async fn active_context(root: Option<String>) -> ActiveContext {
-    tauri::async_runtime::spawn_blocking(move || gather(root.as_deref().map(Path::new)))
+pub async fn active_context(
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
+    root: Option<String>,
+) -> Result<ActiveContext, String> {
+    let root = match root {
+        Some(path) => match crate::workspace::allowed(&state, Path::new(&path)) {
+            Ok(path) => Some(path),
+            Err(_) => return Ok(ActiveContext::default()),
+        },
+        None => None,
+    };
+    Ok(tauri::async_runtime::spawn_blocking(move || gather(root.as_deref()))
         .await
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 #[cfg(test)]

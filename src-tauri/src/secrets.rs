@@ -179,7 +179,7 @@ pub fn scan_staged(root: &Path) -> Result<SecretScan, String> {
 pub fn scan_staged_builtin(root: &Path) -> Result<SecretScan, String> {
     let staged = Command::new("git")
         .current_dir(root)
-        .args(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
+        .args(["diff", "-z", "--cached", "--name-only", "--diff-filter=ACMR"])
         .output()
         .map_err(|e| format!("could not list staged files: {e}"))?;
     if !staged.status.success() {
@@ -187,10 +187,15 @@ pub fn scan_staged_builtin(root: &Path) -> Result<SecretScan, String> {
     }
 
     let mut findings = Vec::new();
-    for name in String::from_utf8_lossy(&staged.stdout).lines() {
-        let name = name.trim();
+    for name in staged.stdout.split(|b| *b == 0) {
         if name.is_empty() {
             continue;
+        }
+        let name = std::str::from_utf8(name).map_err(|_| "staged path is not UTF-8".to_string())?;
+        if Path::new(name).is_absolute()
+            || name.split(['/', '\\']).any(|part| part == ".." || part.is_empty())
+        {
+            return Err("staged path must stay inside the repository".into());
         }
         // Read the staged content, not the working tree: they differ.
         let blob = Command::new("git")
@@ -230,11 +235,38 @@ pub fn refusal(scan: &SecretScan) -> String {
     lines.join("\n")
 }
 
+/// Scan prompt, attached context and project instructions. Never the API key.
+pub fn outbound_findings(prompt: &str, context: &str, instructions: &str) -> Vec<SecretFinding> {
+    let mut findings = scan_text(prompt, "prompt");
+    findings.extend(scan_text(context, "context"));
+    findings.extend(scan_text(instructions, "instructions"));
+    findings
+}
+
+pub fn refuse_outbound(findings: &[SecretFinding]) -> String {
+    let mut lines = vec![format!(
+        "Request blocked: {} possible secret{} in the prompt or attached context.",
+        findings.len(),
+        if findings.len() == 1 { "" } else { "s" }
+    )];
+    for finding in findings.iter().take(20) {
+        lines.push(format!(
+            "  {}:{} — {}",
+            finding.file, finding.start_line, finding.description
+        ));
+    }
+    if findings.len() > 20 {
+        lines.push(format!("  …and {} more", findings.len() - 20));
+    }
+    lines.push("Remove them before sending. The value itself is never logged.".into());
+    lines.join("\n")
+}
+
 #[tauri::command]
-pub async fn scan_buffer_secrets(path: String, text: String) -> Vec<SecretFinding> {
+pub async fn scan_buffer_secrets(path: String, text: String) -> Result<Vec<SecretFinding>, String> {
     tauri::async_runtime::spawn_blocking(move || scan_text(&text, &path))
         .await
-        .unwrap_or_default()
+        .map_err(|e| format!("secret scan did not complete: {e}"))
 }
 
 #[cfg(test)]
@@ -286,6 +318,17 @@ mod tests {
         assert!(!message.contains(secret), "refusal leaked the secret: {message}");
         assert!(message.contains("app.py:1"), "refusal must say where: {message}");
         assert!(message.starts_with("Commit blocked"));
+    }
+
+    #[test]
+    fn outbound_scan_blocks_context_and_never_echoes_the_value() {
+        let secret = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+        let findings = outbound_findings("review this", &format!("token = {secret}"), "");
+        assert_eq!(findings[0].file, "context");
+        let message = refuse_outbound(&findings);
+        assert!(message.starts_with("Request blocked"));
+        assert!(!message.contains(secret), "outbound refusal leaked the secret: {message}");
+        assert!(outbound_findings("hello", "fn main() {}", "").is_empty());
     }
 
     #[test]

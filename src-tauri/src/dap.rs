@@ -181,8 +181,8 @@ fn connect(
         if let Ok(path) = std::env::join_paths(crate::toolpath::search_dirs()) {
             cmd.env("PATH", path);
         }
+        crate::toolpath::apply_user_env(&mut cmd, adapter.env)?;
         cmd.args(adapter.args)
-            .envs(adapter.env)
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

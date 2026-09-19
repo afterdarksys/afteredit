@@ -8,7 +8,9 @@
 //! Threats: this deliberately copies file contents to a second location. The
 //! store is 0700 under the app data directory, and key material (private
 //! keys, certificates, .netrc, credentials files) is never snapshotted --
-//! duplicating a private key to make undo nicer is a bad trade. It does NOT
+//! duplicating a private key to make undo nicer is a bad trade. Content that
+//! matches the secret scanner is skipped the same way; `.env` itself is still
+//! eligible when it does not contain a known credential shape. It does NOT
 //! encrypt at rest, so it is exactly as sensitive as the files it covers.
 
 use std::fs;
@@ -73,7 +75,7 @@ fn error(e: impl std::fmt::Display) -> String {
 
 /// FNV-1a. Hand-rolled because it must stay stable across Rust releases --
 /// DefaultHasher explicitly does not, and these names are persisted.
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
         hash ^= *byte as u64;
@@ -200,9 +202,13 @@ fn list_dir_entries(dir: &Path) -> Result<Vec<Entry>, String> {
 }
 
 /// Snapshot `content`. Returns the new entry, or None when nothing was stored
-/// (excluded, too large, or identical to the previous snapshot).
+/// (excluded, too large, secret-bearing, or identical to the previous snapshot).
 pub fn record(root: &Path, file: &Path, content: &str, label: Label) -> Result<Option<Entry>, String> {
     if excluded(file) || content.len() > MAX_FILE_BYTES {
+        return Ok(None);
+    }
+    let name = file.to_string_lossy();
+    if !crate::secrets::scan_text(content, &name).is_empty() {
         return Ok(None);
     }
 
@@ -252,13 +258,24 @@ pub fn snapshot(app: &AppHandle, file: &Path, content: &str, label: Label) {
 }
 
 #[tauri::command]
-pub fn history_list(app: AppHandle, path: String) -> Result<Vec<Entry>, String> {
-    list(&store_root(&app)?, Path::new(&path))
+pub fn history_list(
+    app: AppHandle,
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
+    path: String,
+) -> Result<Vec<Entry>, String> {
+    let path = crate::workspace::allowed(&state, Path::new(&path))?;
+    list(&store_root(&app)?, &path)
 }
 
 #[tauri::command]
-pub fn history_read(app: AppHandle, path: String, id: String) -> Result<String, String> {
-    read(&store_root(&app)?, Path::new(&path), &id)
+pub fn history_read(
+    app: AppHandle,
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
+    path: String,
+    id: String,
+) -> Result<String, String> {
+    let path = crate::workspace::allowed(&state, Path::new(&path))?;
+    read(&store_root(&app)?, &path, &id)
 }
 
 #[cfg(test)]
@@ -270,6 +287,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn fnv1a_is_stable_across_calls() {
+        assert_eq!(fnv1a(b"/Users/ryan/project"), fnv1a(b"/Users/ryan/project"));
+        assert_ne!(fnv1a(b"/a"), fnv1a(b"/b"));
     }
 
     #[test]
@@ -364,6 +387,30 @@ mod tests {
         for name in ["/w/.env", "/w/main.tf", "/w/values.yaml", "/w/Makefile", "/w/app.py"] {
             assert!(!excluded(Path::new(name)), "{name} should be kept");
         }
+    }
+
+    #[test]
+    fn a_secret_in_the_buffer_is_not_snapshotted() {
+        let root = store("secret-buffer");
+        let file = Path::new("/w/.env");
+        assert!(!excluded(file));
+        assert!(
+            record(
+                &root,
+                file,
+                "token=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\n",
+                Label::Save
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(list(&root, file).unwrap().is_empty());
+        assert!(
+            record(&root, file, "TOKEN=${TOKEN}\n", Label::Save)
+                .unwrap()
+                .is_some()
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

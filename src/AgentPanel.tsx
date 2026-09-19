@@ -1,6 +1,9 @@
 import ChangeReview from './ChangeReview';
 import {useEffect,useRef,useState} from 'react';
+import {invoke} from '@tauri-apps/api/core';
 import {agentInstructions,parseAction,type AgentAction} from './agent';
+import type {SecretFinding} from './policy';
+import {secretRefusal} from './secrets';
 import {taskOrder,type Task} from './workflows';
 export type RunBudget={id:string;maxRequests:number;maxUnits:number};
 type Run={budget:RunBudget;steps:number;goal:string;context:string;transcript:string;stopped:boolean;autoRead:boolean;ask:Props['ask'];read:Props['onRead'];edit:Props['onEdit'];task:Props['onTask'];tasks:Record<string,Task>};
@@ -34,7 +37,12 @@ export default function AgentPanel(props:Props){
   try{
    let observation='';
    if(action.type==='read_file')observation=`File ${action.path}:\n${(await run.read(action.path)).slice(0,60000)}\n[File context limited to 60,000 characters]`;
-   if(action.type==='edit_file')observation=await run.edit(action.path,action.oldText,action.newText);
+   if(action.type==='edit_file'){
+    const findings=await invoke<SecretFinding[]>('scan_buffer_secrets',{path:action.path,text:action.newText});
+    if(findings.length)throw new Error(secretRefusal(findings,'the proposed edit'));
+    observation=await run.edit(action.path,action.oldText,action.newText);
+    void invoke('journal_agent_edit',{root:props.root,path:action.path}).catch(()=>{});
+   }
    if(action.type==='run_task'){taskRunning.current=true;try{observation=await run.task(action.task);}finally{taskRunning.current=false;}}
    note(run,`${JSON.stringify(action)}\nTool observation: ${observation}`);
   }catch(e){note(run,`Tool failed: ${String(e)}`);}finally{if(current.current===run)setBusy(false);}

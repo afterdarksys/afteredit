@@ -8,14 +8,54 @@
 //! Findings come back shaped like `InfrastructureDiagnostic` so they ride the
 //! marker pipeline the editor already has.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::toolpath::{resolve_binary, tail};
+
+/// Last successful evaluation per project root: error count. Missing means
+/// policies exist but have not been evaluated in this process.
+fn reviews() -> &'static Mutex<HashMap<PathBuf, usize>> {
+    static REVIEWS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+    REVIEWS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_review(root: &Path, report: &PolicyReport) {
+    let errors = report
+        .findings
+        .iter()
+        .filter(|finding| finding.severity == "error")
+        .count();
+    if let Ok(mut map) = reviews().lock() {
+        map.insert(root.to_path_buf(), errors);
+    }
+}
+
+/// Terraform/OpenTofu apply is blocked when the project has Rego and the last
+/// evaluation in this process still reports errors, or was never run.
+pub fn require_apply(root: &Path) -> Result<(), String> {
+    let sources = discover(root);
+    if sources.policy_dirs.is_empty() {
+        return Ok(());
+    }
+    match reviews().lock() {
+        Ok(map) => match map.get(root) {
+            Some(0) => Ok(()),
+            Some(count) => Err(format!(
+                "Policy still reports {count} violation{}; apply is blocked.",
+                if *count == 1 { "" } else { "s" }
+            )),
+            None => Err("Evaluate policies against the current plan before applying.".into()),
+        },
+        Err(_) => Err("Policy review state is unavailable; apply is blocked.".into()),
+    }
+}
 
 /// Rule names OPA policies conventionally expose, and how loudly to report them.
 const RULES: &[(&str, &str)] = &[
@@ -203,9 +243,15 @@ fn collect_files(root: &Path, extension: &str, depth: usize, out: &mut Vec<PathB
     let Ok(entries) = fs::read_dir(root) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
+        let Ok(file_type) = entry.file_type() else { continue };
+        // Followed symlinks would walk out of the project; listing skips them
+        // the same way workspace.rs does.
+        if file_type.is_symlink() {
+            continue;
+        }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if path.is_dir() {
+        if file_type.is_dir() {
             if !name.starts_with('.') || name == ".github" {
                 if !SKIP_DIRS.contains(&name.as_ref()) {
                     collect_files(&path, extension, depth + 1, out);
@@ -217,13 +263,9 @@ fn collect_files(root: &Path, extension: &str, depth: usize, out: &mut Vec<PathB
     }
 }
 
-/// Where the policies and candidate inputs live in this workspace.
-#[tauri::command]
-pub async fn policy_discover(root: String) -> Result<PolicySources, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = PathBuf::from(&root);
+fn discover(root: &Path) -> PolicySources {
         let mut rego = Vec::new();
-        collect_files(&root, "rego", 0, &mut rego);
+        collect_files(root, "rego", 0, &mut rego);
 
         let mut policy_dirs: Vec<String> = rego
             .iter()
@@ -250,9 +292,18 @@ pub async fn policy_discover(root: String) -> Result<PolicySources, String> {
             inputs,
             opa: resolve_binary("opa").map(|p| p.display().to_string()),
         }
-    })
-    .await
-    .map_err(error)
+}
+
+/// Where the policies and candidate inputs live in this workspace.
+#[tauri::command]
+pub async fn policy_discover(
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
+    root: String,
+) -> Result<PolicySources, String> {
+    let root = crate::workspace::allowed(&state, Path::new(&root))?;
+    tauri::async_runtime::spawn_blocking(move || discover(&root))
+        .await
+        .map_err(error)
 }
 
 fn evaluate(root: &Path, policies: &Path, input: &Path) -> Result<PolicyReport, String> {
@@ -319,15 +370,23 @@ fn evaluate(root: &Path, policies: &Path, input: &Path) -> Result<PolicyReport, 
 
 #[tauri::command]
 pub async fn policy_evaluate(
+    state: tauri::State<'_, crate::workspace::WorkspaceState>,
     root: String,
     policies: String,
     input: String,
 ) -> Result<PolicyReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        evaluate(Path::new(&root), Path::new(&policies), Path::new(&input))
-    })
-    .await
-    .map_err(error)?
+    let root = crate::workspace::allowed(&state, Path::new(&root))?;
+    let policies = crate::workspace::allowed(&state, Path::new(&policies))?;
+    let input = crate::workspace::allowed(&state, Path::new(&input))?;
+    if !policies.starts_with(&root) || !input.starts_with(&root) {
+        return Err("Policy paths must stay inside the project".into());
+    }
+    let review_root = root.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || evaluate(&root, &policies, &input))
+        .await
+        .map_err(error)??;
+    remember_review(&review_root, &report);
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -461,6 +520,69 @@ mod tests {
         assert!(collect_findings(&value).is_empty());
     }
 
+    fn empty_report() -> PolicyReport {
+        PolicyReport {
+            findings: Vec::new(),
+            engine: "opa".into(),
+            policies: "/w/policies".into(),
+            input: "/w/plan.json".into(),
+            unlocated: 0,
+        }
+    }
+
+    #[test]
+    fn apply_is_blocked_until_a_clean_review() {
+        let root = std::env::temp_dir().join(format!(
+            "afteredit-policy-apply-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("policies")).unwrap();
+        fs::write(root.join("policies/deny.rego"), "package test\n").unwrap();
+
+        assert!(
+            require_apply(&root).unwrap_err().contains("Evaluate policies"),
+            "unreviewed apply must fail closed"
+        );
+
+        let mut dirty = empty_report();
+        dirty.findings.push(PolicyFinding {
+            severity: "error".into(),
+            rule: "test.deny".into(),
+            message: "no".into(),
+            resource: None,
+            path: None,
+            line: None,
+            column: None,
+        });
+        remember_review(&root, &dirty);
+        assert!(require_apply(&root).unwrap_err().contains("1 violation"));
+
+        remember_review(&root, &empty_report());
+        require_apply(&root).expect("a clean review must allow apply");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_is_allowed_when_the_project_has_no_policies() {
+        let root = std::env::temp_dir().join(format!(
+            "afteredit-policy-empty-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        require_apply(&root).expect("no .rego files means nothing to violate");
+        let _ = fs::remove_dir_all(&root);
+    }
+
     /// End to end through the real binary. Skips when OPA is absent.
     #[test]
     fn evaluates_real_rego_against_a_real_plan() {
@@ -523,6 +645,23 @@ mod tests {
         // The point of the whole feature: each violation on its own declaration.
         assert_eq!(line_of("aws_s3_bucket.logs"), Some(1));
         assert_eq!(line_of("aws_s3_bucket.artifacts"), Some(5));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn collect_files_does_not_follow_directory_symlinks() {
+        let root = std::env::temp_dir().join(format!("afteredit-policy-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("policies")).unwrap();
+        fs::write(root.join("policies/ok.rego"), "package x\n").unwrap();
+        std::os::unix::fs::symlink("/", root.join("escape")).unwrap();
+
+        let mut found = Vec::new();
+        collect_files(&root, "rego", 0, &mut found);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].ends_with("ok.rego"));
 
         let _ = fs::remove_dir_all(&root);
     }

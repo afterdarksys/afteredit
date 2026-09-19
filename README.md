@@ -105,8 +105,17 @@ Rules accept `save` or `manual`, with `*`, `**`, and `?` path globs. Save rules 
 matching tasks for an explicit Run action. Opening a repository never runs its
 commands. Trust resets when the project scope/configuration changes.
 
+Destructive commands aimed at a production cluster, account or Terraform workspace
+must be confirmed by typing that context name. The same dialog covers reviewed
+tasks and the terminal: Enter is withheld until the name matches. Unrecognised
+command shapes are not gated. Tab completion and arrow-key editing skip the
+terminal overlay rather than guessing.
+
 Build workflows → **Run monitor** shows live task output, elapsed time, exit
 status, cancellation/timeouts, structured test cases and retained run history.
+Confirmed mutations (production confirms, Terraform/OpenTofu apply, git commits
+and agent edits) also appear in an operator journal on that page: locations and
+context names only, never file contents or secret values.
 Node and Go reporter presets enable test exploration; JUnit reports can be
 imported. Named tasks support reviewed reruns, bounded repeated attempts, and
 failed-test debug configuration handoff. Run and debug adds a request timeline,
@@ -133,7 +142,10 @@ Agent actions are parsed only after a complete response; Stop run also cancels i
 current provider request. Usage reservations remain charged after cancellation.
 
 The active file is included only when explicitly selected. Effective project
-instructions are displayed and included. Requests have a 120-second timeout,
+instructions are displayed and included. Prompt, attached context and project
+instructions are scanned for known credential shapes before the request is
+reserved; a finding or a scan that cannot complete blocks the send. The
+provider API key is not scanned. Requests have a 120-second timeout,
 256 KB input limit and 2 MB response limit.
 
 Daily request caps and reservation-unit caps are enforced before sending and stored
@@ -147,7 +159,8 @@ Agent runs loop through model requests and tool observations with separate step
 and reservation caps, enforced together with daily caps before each request.
 The model can read existing project files, propose unique exact-text replacements,
 and request named configured tasks. Reads require approval unless enabled for the
-run; edits and tasks always require review. Task environment values are not sent
+run; edits and tasks always require review. Proposed edits are scanned for
+secrets before they land in a buffer. Task environment values are not sent
 as model task metadata. File reads remain within the selected project root.
 Approved edits update unsaved buffers; use Save all modified project files before
 approving a build. Saves retain external-change checks. Stop prevents subsequent
@@ -367,7 +380,8 @@ Select a tool and action, review the exact command/dependency list, and enable t
 before running. No command runs when merely opening the page. Built-ins include:
 
 - Terraform/OpenTofu: format, format-check, backend-disabled init plus JSON
-  validation, TFLint, plan/trace-plan, existing plan JSON and native CLI tests.
+  validation, TFLint, plan/trace-plan, existing plan JSON, apply of `plan.out`
+  after a clean policy evaluation, and native CLI tests.
 - Ansible: syntax check, offline ansible-lint SARIF, check/diff, list-tasks and an
   Ansibug listener for debugging.
 
@@ -396,7 +410,11 @@ views; stop it from Infrastructure. Use matching Python executable paths in the
 workflow and adapter when virtual environments are involved. Ansibug launch requires
 runInTerminal, so this version uses its supported attach flow. Ansible check mode
 follows each module's check-mode behavior and is not a universal no-side-effects
-sandbox. No remote playbook or infrastructure apply is run by the test suite.
+sandbox. Apply uses the saved `plan.out` and stays disabled until the last
+policy evaluation for this project has zero errors (or the project has no
+`.rego` files). Rust re-checks that gate and still requires typing the context
+name when the target looks like production. No remote playbook or
+infrastructure apply is run by the test suite.
 
 `node scripts/test-infrastructure.mjs` checks real Terraform/OpenTofu diagnostics
 against a provider-free invalid fixture and Ansible syntax against a localhost
@@ -444,8 +462,9 @@ to 2 MB and Git commands time out after 30 seconds.
 
 Stage/unstage operates on one listed file (including the source of a rename).
 Save open buffers before staging. Enter a commit message, review all staged changes,
-then Commit reviewed changes. The backend checks the reviewed tree and commits
-a separate index snapshot, preserving concurrent staging and working-tree edits.
+then Commit reviewed changes. The backend scans staged blobs for secrets (never
+echoing matched values), checks the reviewed tree and commits a separate index
+snapshot, preserving concurrent staging and working-tree edits.
 Normal Git hooks still run. Conflicts, identity/signing problems and hook failures
 are shown in the panel. Push, pull, merge, history and branch switching are not
 included in this batch.
