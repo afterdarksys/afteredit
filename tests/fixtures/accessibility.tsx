@@ -8,4 +8,4 @@ createRoot(document.getElementById('root')!).render(fixture==='terminal'
   ? <div className="terminal-panel" style={{height:700}}><TerminalPanel theme="win"/></div>
   : <div className="workbench-page"><AgentPanel root="/project" context="" tasks={{}}
       ask={async()=>JSON.stringify({type:'edit_file',path:'example.ts',oldText:'const value = 1;',newText:'const value = 2;'})}
-      onRead={async()=>''} onEdit={async()=>''} onTask={async()=>''} onStopTask={()=>{}} onSaveEdits={async()=>{}}/></div>);
+      onRead={async()=>''} onEdit={async()=>''} onTask={async()=>''} onInspectRun={async()=>'No monitored runs for this project in this app session.'} onProposeDebugLaunch={async()=>'unused'} onInspectDebug={async()=>'{"phase":"idle"}'} onStopTask={()=>{}} onSaveEdits={async()=>{}}/></div>);

@@ -72,6 +72,16 @@ reruns. Reports are limited to 5,000 cases; streamed retained case data and JUni
 input are bounded to 2 MiB. Malformed/truncated streamed reports remain incomplete.
 Command exit status is shown independently from reported test outcomes.
 
+## Agent investigation probes
+
+The reviewed agent can inspect this project's monitor rows (`inspect_run`) and
+already-captured debugger watches or snapshots (`inspect_debug`), and can
+propose the same failed-test debug configuration (`propose_debug_launch`).
+Those probes return command metadata and failed cases, not command output or
+live variable dumps. The debug handoff prepares Run and debug with trust
+cleared; it does not start the adapter or issue continue, step, or evaluate
+requests. Observations are secret-scanned before they return to the model.
+
 ## Reruns, repetition and failed-test debugging
 
 A completed named workflow task offers **Review rerun / repeat**. A failed

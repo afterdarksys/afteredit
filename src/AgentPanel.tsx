@@ -7,7 +7,7 @@ import {secretRefusal} from './secrets';
 import {taskOrder,type Task} from './workflows';
 export type RunBudget={id:string;maxRequests:number;maxUnits:number};
 type Run={budget:RunBudget;steps:number;goal:string;context:string;transcript:string;stopped:boolean;autoRead:boolean;ask:Props['ask'];read:Props['onRead'];edit:Props['onEdit'];task:Props['onTask'];tasks:Record<string,Task>};
-type Props={onCancelRequest?:()=>void;root:string;context:string;tasks:Record<string,Task>;ask:(prompt:string,context:string,budget:RunBudget)=>Promise<string>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>};
+type Props={onCancelRequest?:()=>void;root:string;context:string;tasks:Record<string,Task>;ask:(prompt:string,context:string,budget:RunBudget)=>Promise<string>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onInspectRun:(runId?:number)=>Promise<string>;onProposeDebugLaunch:(runId:number,testId:string)=>Promise<string>;onInspectDebug:()=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>};
 export default function AgentPanel(props:Props){
  const [goal,setGoal]=useState(''),[maxSteps,setMaxSteps]=useState(8),[maxUnits,setMaxUnits]=useState(50000),[autoRead,setAutoRead]=useState(false);
  const [busy,setBusy]=useState(false),[active,setActive]=useState(false),[status,setStatus]=useState(''),[log,setLog]=useState('');
@@ -28,7 +28,7 @@ export default function AgentPanel(props:Props){
    const action=parseAction(text,Object.keys(run.tasks));
    if(action.type==='finish'){note(run,action.message);setStatus('Agent finished');setActive(false);return;}
    setBusy(false);
-   if(action.type==='read_file'&&run.autoRead){await perform(run,action);return;}
+   if((action.type==='read_file'||action.type==='inspect_run'||action.type==='inspect_debug')&&run.autoRead){await perform(run,action);return;}
    setPending({run,action});setStatus('Review the proposed action below.');
   }catch(e){if(live(run)){setStatus(String(e));setActive(false);run.stopped=true;}}finally{if(current.current===run)setBusy(false);}
  }
@@ -44,16 +44,24 @@ export default function AgentPanel(props:Props){
     void invoke('journal_agent_edit',{root:props.root,path:action.path}).catch(()=>{});
    }
    if(action.type==='run_task'){taskRunning.current=true;try{observation=await run.task(action.task);}finally{taskRunning.current=false;}}
+   if(action.type==='inspect_run')observation=await props.onInspectRun(action.runId);
+   if(action.type==='inspect_debug')observation=await props.onInspectDebug();
+   if(action.type==='propose_debug_launch')observation=await props.onProposeDebugLaunch(action.runId,action.testId);
+   if(observation){
+    const findings=await invoke<SecretFinding[]>('scan_buffer_secrets',{path:'agent-observation.txt',text:observation});
+    if(findings.length)throw new Error(secretRefusal(findings,'the tool observation'));
+    observation=observation.slice(0,60000);
+   }
    note(run,`${JSON.stringify(action)}\nTool observation: ${observation}`);
   }catch(e){note(run,`Tool failed: ${String(e)}`);}finally{if(current.current===run)setBusy(false);}
   if(live(run))await next(run);
  }
  function start(){const run:Run={budget:{id:crypto.randomUUID(),maxRequests:maxSteps,maxUnits},steps:0,goal,context:props.context.slice(0,60000),transcript:'',stopped:false,autoRead,ask:props.ask,read:props.onRead,edit:props.onEdit,task:props.onTask,tasks:props.tasks};current.current=run;setLog('');setPending(null);setActive(true);void next(run);}
- return <section><h2>Agent run</h2><p>The agent can read project files, propose exact edits to unsaved buffers, and run configured tasks. Edits and commands require review. Save approved buffers before approving builds that depend on them.</p>
+ return <section><h2>Agent run</h2><p>The agent can read project files, inspect recent runs and captured debug snapshots, propose a failed-test debug configuration without starting the adapter, propose exact edits, and run configured tasks. Edits, tasks and debug handoff require review. Save approved buffers before approving builds that depend on them.</p>
  <label>Goal<textarea rows={3} value={goal} disabled={active} onChange={e=>setGoal(e.target.value)}/></label><div className="field-row"><label>Maximum model steps<input type="number" min="1" max="100" value={maxSteps} disabled={active} onChange={e=>setMaxSteps(Number(e.target.value))}/></label><label>Maximum run reservation units<input type="number" min="1" value={maxUnits} disabled={active} onChange={e=>setMaxUnits(Number(e.target.value))}/></label></div>
- <label className="check"><input type="checkbox" checked={autoRead} disabled={active} onChange={e=>setAutoRead(e.target.checked)}/> Allow project file reads without asking on every step</label>
+ <label className="check"><input type="checkbox" checked={autoRead} disabled={active} onChange={e=>setAutoRead(e.target.checked)}/> Allow project file reads and investigation probes without asking on every step</label>
  <button disabled={!props.root||!goal.trim()||active||busy||!Number.isInteger(maxSteps)||maxSteps<1||maxSteps>100||!Number.isSafeInteger(maxUnits)||maxUnits<1} onClick={start}>Start agent run</button>{active&&<button onClick={stop}>Stop run</button>}
  <p role="status">{status}</p>
- {pending&&<div className="agent-review"><h3 ref={reviewHeading} tabIndex={-1}>Review {pending.action.type}</h3>{pending.action.type==='edit_file'?<ChangeReview path={pending.action.path} oldText={pending.action.oldText} newText={pending.action.newText}/>:pending.action.type==='run_task'?<pre>{JSON.stringify(taskOrder(pending.run.tasks,[pending.action.task]).map(id=>({id,...pending.run.tasks[id]})),null,2)}</pre>:<pre>{JSON.stringify(pending.action,null,2)}</pre>}<button disabled={busy} onClick={()=>{setBusy(true);void props.onSaveEdits().then(()=>setStatus("Saved modified project buffers; review and approve the action when ready.")).catch(e=>setStatus(String(e))).finally(()=>setBusy(false));}}>Save all modified project files</button><button disabled={busy} onClick={()=>void perform(pending.run,pending.action)}>Approve action and continue</button><button onClick={stop}>Reject and stop</button></div>}
+ {pending&&<div className="agent-review"><h3 ref={reviewHeading} tabIndex={-1}>Review {pending.action.type}</h3>{pending.action.type==='edit_file'?<ChangeReview path={pending.action.path} oldText={pending.action.oldText} newText={pending.action.newText}/>:pending.action.type==='run_task'?<pre>{JSON.stringify(taskOrder(pending.run.tasks,[pending.action.task]).map(id=>({id,...pending.run.tasks[id]})),null,2)}</pre>:pending.action.type==='propose_debug_launch'?<><p>Prepares the existing failed-test debug configuration and clears adapter trust. The adapter is not started.</p><pre>{JSON.stringify(pending.action,null,2)}</pre></>:<pre>{JSON.stringify(pending.action,null,2)}</pre>}<button disabled={busy} onClick={()=>{setBusy(true);void props.onSaveEdits().then(()=>setStatus("Saved modified project buffers; review and approve the action when ready.")).catch(e=>setStatus(String(e))).finally(()=>setBusy(false));}}>Save all modified project files</button><button disabled={busy} onClick={()=>void perform(pending.run,pending.action)}>Approve action and continue</button><button onClick={stop}>Reject and stop</button></div>}
  <pre className="ai-answer" tabIndex={0} aria-label="Agent transcript">{log}</pre></section>;
 }

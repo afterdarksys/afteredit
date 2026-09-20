@@ -157,10 +157,14 @@ Users can change their caps. No paid provider calls are made by the test suite.
 
 Agent runs loop through model requests and tool observations with separate step
 and reservation caps, enforced together with daily caps before each request.
-The model can read existing project files, propose unique exact-text replacements,
-and request named configured tasks. Reads require approval unless enabled for the
-run; edits and tasks always require review. Proposed edits are scanned for
-secrets before they land in a buffer. Task environment values are not sent
+The model can read existing project files, inspect this project's recent Run
+monitor rows and already-captured debugger snapshots, propose the existing
+failed-test debug configuration (trust cleared, adapter not started), propose
+unique exact-text replacements, and request named configured tasks. Reads and
+investigation probes require approval unless enabled for the run; edits, tasks
+and debug handoff always require review. The agent cannot continue, step, or
+evaluate in the debugger. Proposed edits and tool observations are scanned for
+secrets before they land in a buffer or return to the model. Task environment values are not sent
 as model task metadata. File reads remain within the selected project root.
 Approved edits update unsaved buffers; use Save all modified project files before
 approving a build. Saves retain external-change checks. Stop prevents subsequent

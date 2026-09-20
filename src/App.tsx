@@ -28,6 +28,8 @@ import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
 import { relativePath, replaceUnique } from './agent';
+import { formatInspectDebug, formatInspectRun, prepareFailedTestLaunch } from './investigation';
+import { runMonitor } from './runMonitor';
 import { applyTextEdits, type FileEdits } from './workspaceEdit';
 import LanguagePanel from './LanguagePanel';
 import { detectBuildSystems, type ConnectedServer } from './languageServices';
@@ -396,6 +398,19 @@ function App() {
     if(Object.entries(buffersRef.current).some(([path,b])=>(path.startsWith(activeRoot+'/')||path.startsWith(activeRoot+'\\'))&&b.value!==b.saved))throw new Error('Save modified project buffers before approving a task.');
     return run([name],true);
   }
+  async function agentInspectRun(runId?:number){
+    return formatInspectRun(runMonitor.getSnapshot(),activeRoot,runId);
+  }
+  async function agentProposeDebugLaunch(runId:number,testId:string){
+    const tasks=Object.fromEntries(Object.entries(config.tasks).map(([id,task])=>{try{return [id,expandTask(task,{project:activeRoot,file:activeBuffer?.disk?active:''})];}catch{return [id,task];}}));
+    const prepared=prepareFailedTestLaunch(runMonitor.getSnapshot(),activeRoot,tasks,config.debug,runId,testId);
+    setPreparedDebug({config:prepared.config,origin:prepared.origin,id:Date.now()});
+    setCompatibility(false);
+    return prepared.preview;
+  }
+  async function agentInspectDebug(){
+    return formatInspectDebug({phase:debug.phase,stopReason:debug.stopReason,frame:debug.frame,thread:debug.thread,watches:debug.tools.watches,values:debug.tools.values,snapshots:debug.tools.snapshots,exception:debug.tools.exception});
+  }
   async function configure() {
     try {
       const content = JSON.stringify({ editor: defaults.editor, tasks: Object.fromEntries(Object.entries(presets[preset]).map(([id, task]) => [id, { ...task, cwd: scope.slice(activeRoot.length + 1) || '.' }])), rules: [], languageServers:preset==='Terraform'?{hcl:{command:'terraform-ls',args:['serve'],documentLanguage:'terraform'}}:preset==='OpenTofu'?{hcl:{command:'tofu-ls',args:['serve'],documentLanguage:'opentofu'}}:preset==='Ansible'?{ansible:{command:'ansible-language-server',args:['--stdio'],documentLanguage:'ansible'}}:{}, instructions: '' }, null, 2) + '\n';
@@ -548,7 +563,7 @@ function App() {
             {view === 'git' && <GitPanel key={root} root={root} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} onOpen={path=>void openFile(path).catch(report)}/>}
             <div style={{display:view==='shared'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><SharedWorkspacePanel root={activeRoot} onDirty={setSharedDirty}/></div>
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
-            {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
+            {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onInspectRun={agentInspectRun} onProposeDebugLaunch={agentProposeDebugLaunch} onInspectDebug={agentInspectDebug} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
             {view === 'languages' && <LanguagePanel initialLanguage={languageIntent.language} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
             {view === 'search' && <SearchPanel root={activeRoot} servers={servers} onOpen={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} compatibility={compatibility} onCompatibility={enabled=>{setCompatibility(enabled);setView('editor');}} extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}

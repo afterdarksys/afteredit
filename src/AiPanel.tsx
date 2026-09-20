@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {listen} from '@tauri-apps/api/event';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { usePersistedState } from './usePersistedState';
-export default function AiPanel({ context, instructions, root, tasks, onRead, onEdit, onTask, onStopTask, onSaveEdits }: { context:string;instructions:string;root:string;tasks:Record<string,Task>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void> }) {
+export default function AiPanel({ context, instructions, root, tasks, onRead, onEdit, onTask, onInspectRun, onProposeDebugLaunch, onInspectDebug, onStopTask, onSaveEdits }: { context:string;instructions:string;root:string;tasks:Record<string,Task>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onInspectRun:(runId?:number)=>Promise<string>;onProposeDebugLaunch:(runId:number,testId:string)=>Promise<string>;onInspectDebug:()=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void> }) {
   const [stream,setStream]=usePersistedState('ai.stream',true);
   const activeRequests=useRef(new Set<string>()),dispatched=useRef(new Set<string>());
   const chatRequest=useRef<string|null>(null),agentRequest=useRef<string|null>(null),mounted=useRef(true);
@@ -62,7 +62,7 @@ export default function AiPanel({ context, instructions, root, tasks, onRead, on
     <button disabled={busy || !isTauri() || !model.trim() || !prompt.trim()} onClick={() => void ask()}>{busy ? 'Waiting for provider…' : 'Send request'}</button>
     {busy&&<button onClick={()=>{cancel(chatRequest.current);setStatus("Cancelling request…");}}>Stop response</button>}
     <p role="status">{status}</p><pre className="ai-answer" tabIndex={0} aria-label="AI response">{answer}</pre>
-    <AgentPanel onCancelRequest={()=>cancel(agentRequest.current)} root={root} context={include?context:''} tasks={tasks} ask={agentAsk} onRead={onRead} onEdit={onEdit} onTask={onTask} onStopTask={onStopTask} onSaveEdits={onSaveEdits}/>
+    <AgentPanel onCancelRequest={()=>cancel(agentRequest.current)} root={root} context={include?context:''} tasks={tasks} ask={agentAsk} onRead={onRead} onEdit={onEdit} onTask={onTask} onInspectRun={onInspectRun} onProposeDebugLaunch={onProposeDebugLaunch} onInspectDebug={onInspectDebug} onStopTask={onStopTask} onSaveEdits={onSaveEdits}/>
     <p>Chat responses are suggestions. Agent runs use reviewed tool actions and separate per-run caps. External agent CLIs in the terminal have their own billing and limits.</p>
   </section>;
 }

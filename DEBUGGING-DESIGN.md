@@ -158,6 +158,12 @@ check negotiated capabilities and honor session-scoped references.
 
 ## Failure-to-debug handoff
 
+The reviewed agent may request `inspect_run`, `propose_debug_launch`, and
+`inspect_debug` against this evidence. Those actions read monitor rows or
+captured snapshots, or prepare the existing failed-test debug configuration
+with trust cleared. They do not start the adapter, continue, step, or
+evaluate. Command output and live variable dumps stay out of the observation.
+
 A test adapter optionally supplies a launch mapping to a named debug
 configuration. Preserve project, cwd, test selector, source revision and
 toolchain identity. Display changes since the test ran. Existing save and

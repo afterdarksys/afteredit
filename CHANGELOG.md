@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Investigation probes
+
+- The reviewed agent can **inspect** this project's Run monitor rows and
+  already-captured debugger watches or snapshots, and **propose** the existing
+  failed-test debug configuration. That prepares Run and debug with trust
+  cleared; it does not start the adapter or step the process. Command output
+  and live variable dumps stay out of the observation. Observations are
+  secret-scanned before they return to the model.
+
 ### Operator gates
 
 - Destructive production commands in **tasks and the terminal** require typing
