@@ -16,6 +16,11 @@ export async function nativeHarness(page:Page){
     if(command==='plugin:event|unlisten')return;
     if(command==='restore_session')return {roots:['/project'],files:['/project/note.txt'],active:'/project/note.txt',root:'/project',directory:'/project'};
     if(command==='save_session')return;
+    if(command==='restore_drafts')return [];
+    if(command==='save_drafts')return {withheld:[]};
+    if(command==='watch_project'||command==='update_menu'||command==='pty_write'||command==='pty_resize'||command==='editor_release')return;
+    if(command==='git_worktrees')return [];
+    if(command==='task_challenge')return null;
     if(command==='list_directory')return [{name:'note.txt',path:'/project/note.txt',directory:false}];
     if(command==='read_file'){if(!(args.path in w.testDisk))throw Error('File missing');return w.testDisk[args.path];}
     if(command==='save_file'){if(w.testDisk[args.path]!==args.expected)throw Error('External conflict');w.testDisk[args.path]=args.content;return;}
@@ -33,7 +38,7 @@ export async function nativeHarness(page:Page){
     if(command==='spawn_pty')return true;
     if(command==='ask_ai')return new Promise((resolve,reject)=>pending.set(args.request.requestId,{resolve,reject}));
     if(command==='cancel_ai'){pending.get(args.requestId)?.reject('AI request cancelled; reservation retained.');pending.delete(args.requestId);return;}
-    return null;
+    throw new Error(`Native test harness has no response for ${command}`);
    },
   };
  });

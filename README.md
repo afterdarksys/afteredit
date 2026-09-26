@@ -47,6 +47,10 @@ against selected roots.
 
 Saves use a temporary sibling file and rename, preserve permissions, and reject
 externally changed content. Native close prompts when files have unsaved edits.
+If the buffer changes during format-on-save, stale formatting is refused and
+the status bar asks you to save again. Typing during a disk write remains unsaved.
+The terminal's **Save & continue** saves its requested file even after a tab switch;
+failed saves or newer unsaved edits keep the request pending for retry or abort.
 Projects, open file paths and the active tab are restored from a native session
 file on restart. Saved paths are reauthorized by the backend; missing paths and
 retargeted symlinks are skipped. File contents are reread from disk. Unsaved

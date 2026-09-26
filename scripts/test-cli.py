@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real headless clients, IPC, recovery, plain mode and pseudo-terminal smoke tests."""
 import json, os, pathlib, pty, select, socket as unix_socket, subprocess, tempfile, time, shutil, sys
-BINARY = pathlib.Path(__file__).resolve().parents[1] / 'src-tauri/target/debug/afteredit-cli'
+BINARY = pathlib.Path(os.environ['AFTEREDIT_TEST_BINARY']) if 'AFTEREDIT_TEST_BINARY' in os.environ else pathlib.Path(__file__).resolve().parents[1] / 'src-tauri/target/debug/afteredit-cli'
 if not BINARY.exists():
     raise SystemExit('Build first: npm run cli:build')
 fixture = pathlib.Path(tempfile.mkdtemp(prefix='ae-cli-', dir='/tmp'))

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Save safety and release validation
+
+- Format-on-save refuses stale formatter results and preserves edits made during
+  the disk write. A failed save leaves the unformatted buffer intact.
+- Terminal **Save & continue** saves the requested file, regardless of the active
+  tab, and keeps the request available for retry or abort when saving fails or
+  newer edits remain. Failed release requests also remain pending.
+- Watcher reads compare against their original save baseline, so a delayed read
+  cannot revert a newer save.
+- Production browser regressions cover save races and terminal continuation.
+  Native browser mocks now provide draft responses and reject unknown commands.
+- The remaining-work document separates implemented features from their limits
+  and tracks native hands-on verification separately from automated checks.
+- The build script supports macOS Bash's empty-array behavior and correctly
+  forwards debug and bundle options through npm to Tauri.
+
 ### Project guidance and reviewed MCP
 
 - `AGENTS.md` is sent before `.afteredit.json` instructions. Skills live in

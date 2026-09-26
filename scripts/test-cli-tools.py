@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Optional macOS integration: real clangd and LLDB through the shared CLI service."""
-import json, pathlib, shutil, subprocess, tempfile, time, sys
-binary = pathlib.Path(__file__).resolve().parents[1] / 'src-tauri/target/debug/afteredit-cli'
+import json, os, pathlib, shutil, subprocess, tempfile, time, sys
+binary = pathlib.Path(os.environ['AFTEREDIT_TEST_BINARY']) if 'AFTEREDIT_TEST_BINARY' in os.environ else pathlib.Path(__file__).resolve().parents[1] / 'src-tauri/target/debug/afteredit-cli'
 fixture = pathlib.Path(tempfile.mkdtemp(prefix='ae-tools-', dir='/tmp')).resolve()
 socket = fixture / 'session.sock'
 server = None

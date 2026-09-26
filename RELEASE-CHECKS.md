@@ -1,5 +1,57 @@
 # Release checks
 
+## 2026-09-26 save-safety verification
+
+This pass fixes the four save-safety findings and adds seven production-browser
+regressions in `tests/save-safety.spec.ts`. Native mocks now explicitly handle
+draft storage, worktree lists and task challenges; unknown commands reject.
+
+Verified on macOS 15.7.4 (24G508):
+
+- `npm test`: 173 passed.
+- `npm run test:release -- --workers=2`: 21 passed, including all seven new
+  save-safety tests. Uses Chromium with mocked native IPC.
+- `npm run test:a11y -- --workers=2`: 27 passed, 4 timed out waiting for initial
+  editor readiness while a release build was also running. All four passed on
+  `--workers=1 --last-failed` with unchanged assertions. This covers keyboard
+  focus, preferences, screen-reader editor mode, Git/menu workflows, shared
+  buffers, debug controls and startup recovery in Chromium. Native VoiceOver
+  remains unverified; concurrent build load makes dev-server startup tests flaky.
+- `cargo test --manifest-path src-tauri/Cargo.toml`: 167 passed, 5 opt-in tests
+  ignored. Run outside the workspace sandbox because loopback sockets and
+  nested `sandbox-exec` otherwise fail for environmental reasons.
+- The opt-in `lldb_breakpoint_stack_variables_and_step` test passed using real
+  Xcode LLDB: source breakpoint, threads, stack, local variables, watch, step,
+  continue and termination. This verifies the native adapter, not its GUI.
+
+Native observation remains limited: both `AXIsProcessTrusted()` and
+`CGPreflightScreenCaptureAccess()` returned false for this session. Do not count
+process liveness, CLI checks or browser fixtures as evidence of native rendering
+or VoiceOver behavior. Outstanding hands-on checks after installing this build:
+
+- [ ] Native window renders correctly, including the previously reported blank window.
+- [ ] Open/edit/save/reopen a disposable file in the main editor.
+- [ ] Restart and confirm session and dirty-buffer recovery in the main editor.
+- [ ] Exercise stale formatting, external disk conflicts and terminal continuation.
+- [ ] Review/stage/commit a disposable Git change through the native UI.
+- [ ] Run `printf 'AfterEdit shell check\\n'` in the native terminal.
+- [ ] Launch, break and step using the native debugger panel.
+- [ ] Keyboard navigation and VoiceOver in the native webview.
+
+The CLI integration scripts also accept `AFTEREDIT_TEST_BINARY`, so the installed
+app's executable can be tested without substituting a development binary:
+
+```sh
+AFTEREDIT_TEST_BINARY=/Applications/AfterEdit.app/Contents/MacOS/afteredit python3 scripts/test-cli.py
+AFTEREDIT_TEST_BINARY=/Applications/AfterEdit.app/Contents/MacOS/afteredit python3 scripts/test-cli-tools.py
+```
+
+Those scripts use disposable workspaces for shared-buffer editing, real disk
+saves, recovery, task execution/cancellation, a PTY/TUI, clangd and LLDB. They do
+not exercise the main editor's webview or its independent buffer state.
+
+## Repeatable checks
+
 Run `npm run test:release` for production-bundle startup, recovery, restored file
 editing/saving, Git review gating, AI cancellation and terminal focus. The native
 IPC boundary is mocked in these browser tests; they do not validate the OS webview,

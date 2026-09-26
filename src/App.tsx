@@ -241,9 +241,10 @@ function App() {
         const before = buffersRef.current[path];
         if (!before?.disk) continue;
         void invoke<string>('read_file', {path}).then(text => {
+          if (disposed) return;
           const current = buffersRef.current[path];
           if (!current) return;
-          const result = reconcileDisk(current, current.saved, text);
+          const result = reconcileDisk(current, before.saved, text);
           if (result.stale) return;
           if (result.conflict) {
             if (path === activeRef.current || path === sideRef.current) setDiskChange({path, text});
@@ -253,7 +254,7 @@ function App() {
           if (result.buffer !== current) {
             setBuffers(buffers => {
               const buffer = buffers[path];
-              return buffer ? {...buffers, [path]: reconcileDisk(buffer, current.saved, text).buffer} : buffers;
+              return buffer ? {...buffers, [path]: reconcileDisk(buffer, before.saved, text).buffer} : buffers;
             });
           }
         }).catch(() => {});
@@ -357,7 +358,8 @@ function App() {
     } catch (e) { report(e); }
   }
   // A terminal command ($EDITOR) blocked on a file we opened for it.
-  const bridge = useRef({ open: (_p: string) => Promise.resolve(), save: () => Promise.resolve(), report: (_e: unknown) => {} });
+  const bridge = useRef({ open: (_p: string) => Promise.resolve(), save: (_p: string): Promise<boolean> => Promise.resolve(false), report: (_e: unknown) => {} });
+  const bridgeFinishing = useRef(false);
   useEffect(() => {
     if(!isTauri())return;
     let stop: (() => void) | undefined, dead = false;
@@ -384,38 +386,56 @@ function App() {
 
   async function finishBridgedEdit(code: number) {
     const request = pendingEdit;
-    if (!request) return;
+    if (!request || bridgeFinishing.current) return;
+    bridgeFinishing.current = true;
     try {
       // Save before releasing: git re-reads the file the instant we exit, and
       // an unmodified COMMIT_EDITMSG makes it abort.
-      if (code === 0) await bridge.current.save();
+      if (code === 0) {
+        if (!buffersRef.current[request.path]?.disk) throw new Error('Open the requested file before saving and continuing.');
+        if (!await bridge.current.save(request.path)) return;
+      }
       await invoke('editor_release', { id: request.id, code });
       setStatus(code === 0 ? `Released ${basename(request.path)} to the terminal` : 'Terminal command aborted');
+      setPendingEdit(current => current?.id === request.id ? null : current);
     } catch (e) { report(e); }
-    finally { setPendingEdit(null); }
+    finally { bridgeFinishing.current = false; }
   }
 
-  async function save(path = activeRef.current) {
+  async function save(path = activeRef.current): Promise<boolean> {
     const buffer = buffersRef.current[path];
-    if (!buffer?.disk) { if (isTauri()) await saveAs(buffer?.value ?? value, path); else setStatus('Scratch saved locally'); return; }
+    if (!buffer?.disk) { if (isTauri()) return saveAs(buffer?.value ?? value, path); setStatus('Scratch saved locally'); return true; }
     let formatted = buffer.value;
     if (config.editor.formatOnSave) {
       // Best effort: a missing or failing formatter must never block a save.
       try { formatted = (await formatText(languageForFilename(path), formatted)).text; }
       catch (e) { setStatus(`Saved without formatting: ${String(e)}`); }
     }
+    // Formatting runs asynchronously. Never replace edits (or a new save
+    // baseline) made while the formatter was working on the old snapshot.
+    if (buffersRef.current[path] !== buffer) {
+      setStatus(`Not saved: ${basename(path)} changed while formatting. Save again to include your latest edits.`);
+      return false;
+    }
     const snapshot = savedText(formatted, config.editor);
-    if (snapshot !== buffer.value) setBuffers(current => current[path] ? {...current, [path]: {...current[path], value: snapshot}} : current);
     try {
       await invoke('save_file', { path, content: snapshot, expected: buffer.saved });
-      setBuffers(b => b[path]?({ ...b, [path]: { ...b[path], saved: snapshot } }):b);
-      setStatus(`Saved ${basename(path)}`);
+      // Preserve typing during the disk write too. Apply formatting only to
+      // the snapshot we saved, and advance the baseline to what reached disk.
+      const complete = (current: Buffer): Buffer => ({...current, value: current.value === buffer.value && current.saved === buffer.saved ? snapshot : current.value, saved: snapshot});
+      const current = buffersRef.current[path];
+      const saved = current ? complete(current) : undefined;
+      if (saved) buffersRef.current = {...buffersRef.current, [path]: saved};
+      setBuffers(b => b[path] ? {...b, [path]: complete(b[path])} : b);
+      const clean = !!saved && saved.value === saved.saved;
+      setStatus(clean ? `Saved ${basename(path)}` : `Saved ${basename(path)}, but newer edits remain. Save again before continuing.`);
       window.dispatchEvent(new CustomEvent("afteredit:saved",{detail:{path,text:snapshot}}));
-      if (basename(path) === '.afteredit.json') { setRevision(n => n + 1); return; }
+      if (basename(path) === '.afteredit.json') { setRevision(n => n + 1); return clean; }
       const relative = path.slice(activeRoot.length + 1).replace(/\\/g, '/');
       const ids = matchingRules(config,'save',relative).flatMap(r => r.tasks);
       if (ids.length) { setPendingTasks(ids); setView('tasks'); }
-    } catch (e) { report(e); }
+      return clean;
+    } catch (e) { report(e); return false; }
   }
   useEffect(()=>{const open=(event:Event)=>{const {path,line}=(event as CustomEvent).detail;if(path.startsWith(root+'/'))void openFile(path).then(()=>{setReveal({path,line});setView('editor');}).catch(report);};window.addEventListener('afteredit:open-test-source',open);return()=>window.removeEventListener('afteredit:open-test-source',open);},[root]);
   async function run(ids: string[], approved=false):Promise<string> {
