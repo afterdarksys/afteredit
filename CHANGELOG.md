@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Everyday editor, Git, and the agent loop
+
+- Project search supports case, whole word, regular expressions, include and
+  exclude globs, and a reviewed multi-file replace that skips unsaved buffers
+  and files that changed after the preview.
+- The explorer is a project tree with create-folder, rename, move, and delete.
+  The project root and symlinks are left unchanged. The editor can split, and
+  the AI assistant stays mounted in a sidebar.
+- Unsaved disk edits are restored from application drafts when the file still
+  matches the edit's baseline. Secret-looking or unscanned drafts are withheld.
+  The open project is polled every two seconds.
+- Git can fetch, fast-forward pull, switch or create branches, stage one hunk,
+  and push only the reviewed commits ahead of an existing upstream. Push does
+  not force and does not set a new upstream.
+- The agent can list directories, search text, and search symbols. The
+  assistant shows what will be sent. Per-project conversation history withholds
+  secret-looking turns. A run's edits roll back only while the buffer still
+  matches what the run wrote.
+- Selection edit accepts through the editor undo stack. Ghost text is off until
+  enabled and stays out of the way while the snippet list is open.
+
 ### Investigation probes
 
 - The reviewed agent can **inspect** this project's Run monitor rows and

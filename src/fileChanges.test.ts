@@ -9,4 +9,6 @@ test('external changes reload clean files but preserve concurrent user edits',()
  assert.equal(reconcileDisk(dirty,'old','theirs').buffer.value,'mine');
  assert.equal(reconcileDisk({...dirty,saved:'mine'},'old','old').stale,true);
  assert.equal(reconcileDisk(dirty,'old','old').conflict,false);
+ assert.equal(reconcileDisk(dirty,'old','mine').buffer.saved,'mine');
+ assert.equal(reconcileDisk(dirty,'old','mine').conflict,false);
 });

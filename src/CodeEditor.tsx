@@ -15,15 +15,23 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { ConnectedServer } from './languageServices';
 import { activateExtensions } from './extensionRuntime';
 import type { Extension } from './extensions';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import Editor from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { languageForFilename } from './languages';
 import { editorOptions, type EditorPreferences } from './preferences';
+import { editorAi, subscribeEditorAi } from './editorAi';
 export default function CodeEditor({ menuRequest, onReady, infrastructureDiagnostics, breakpoints, onToggleBreakpoint, debugLocation, path, value, onChange, options, onSave, extensions, reveal, onRevealConsumed, servers, onNavigate, onError, onWorkspaceEdit }: { menuRequest?:EditorMenuRequest; onReady:(ready:boolean)=>void; infrastructureDiagnostics:InfrastructureDiagnostic[]; breakpoints:Breakpoint[]; onToggleBreakpoint:(path:string,line:number)=>void; debugLocation?:{path:string;line:number}; path: string; value: string; onChange: (value: string) => void; options: EditorPreferences; onSave: () => void; extensions: Extension[]; reveal: {path:string;line:number}|null; onRevealConsumed:()=>void; servers: ConnectedServer[]; onNavigate:(path:string,line:number)=>void; onError:(text:string)=>void; onWorkspaceEdit?:(files:FileEdits[])=>Promise<void> }) {
   const accessibility = useAccessibility();
   const resolvedTheme = accessibleEditorTheme(accessibility, ['vs','vs-dark','hc-black','hc-light'].includes(options.theme) || extensions.some(e=>e.enabled&&e.themes.some(t=>t.id===options.theme)) ? options.theme : 'vs-dark');
   const [instance, setInstance] = useState<editor.IStandaloneCodeEditor | null>(null);
+  const [selection, setSelection] = useState('');
+  const [instruction, setInstruction] = useState('');
+  const [proposal, setProposal] = useState<string | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editNote, setEditNote] = useState('');
+  const [, setAiGeneration] = useState(0);
+  useEffect(() => { const unsubscribe = subscribeEditorAi(() => setAiGeneration(generation => generation + 1)); return () => { unsubscribe(); }; }, []);
   useEffect(()=>{if(!instance)return;const focus=()=>instance.focus();window.addEventListener('afteredit:focus-editor',focus);return()=>window.removeEventListener('afteredit:focus-editor',focus);},[instance]);
   useEffect(()=>{const model=instance?.getModel();if(!model)return;monaco.editor.setModelMarkers(model,'infrastructure',infrastructureDiagnostics.filter(d=>d.path===path).map(d=>({message:d.message,source:d.source,startLineNumber:d.line,startColumn:d.column,endLineNumber:d.line,endColumn:d.column+1,severity:d.severity==='error'?monaco.MarkerSeverity.Error:d.severity==='warning'?monaco.MarkerSeverity.Warning:monaco.MarkerSeverity.Info})));return()=>{monaco.editor.setModelMarkers(model,'infrastructure',[]);};},[instance,path,infrastructureDiagnostics]);
   useEffect(()=>{onReady(!!instance);return()=>onReady(false);},[instance,onReady]);
@@ -99,6 +107,50 @@ export default function CodeEditor({ menuRequest, onReady, infrastructureDiagnos
     return () => action.dispose();
   }, [instance]);
   useEffect(() => {
+    if (!instance) return;
+    const read = () => {
+      const model = instance.getModel();
+      const range = instance.getSelection();
+      setSelection(model && range && !range.isEmpty() ? model.getValueInRange(range) : '');
+      setProposal(null);
+    };
+    const subscription = instance.onDidChangeCursorSelection(read);
+    return () => subscription.dispose();
+  }, [instance]);
+  useEffect(() => {
+    let disposed = false;
+    let registration: { dispose: () => void } | undefined;
+    const language = languageForFilename(path);
+    const mount = () => {
+      registration?.dispose();
+      if (!editorAi().ghost) return;
+      registration = monaco.languages.registerInlineCompletionsProvider(language, {
+        provideInlineCompletions: async (model, position, _context, token) => {
+          const complete = editorAi().ghost;
+          if (!complete || token.isCancellationRequested) return { items: [] };
+          if (document.querySelector('.suggest-widget.visible')) return { items: [] };
+          const line = model.getLineContent(position.lineNumber);
+          const prefix = line.slice(0, Math.max(0, position.column - 1));
+          if (!prefix.trim()) return { items: [] };
+          await new Promise<void>(resolve => {
+            const timer = setTimeout(resolve, 400);
+            token.onCancellationRequested(() => { clearTimeout(timer); resolve(); });
+          });
+          if (disposed || token.isCancellationRequested) return { items: [] };
+          try {
+            const text = (await complete(prefix.slice(-1500), line.slice(position.column - 1, position.column + 399))).replace(/[\r\n].*$/, '').slice(0, 240);
+            if (!text.trim() || token.isCancellationRequested) return { items: [] };
+            return { items: [{ insertText: text, range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] };
+          } catch { return { items: [] }; }
+        },
+        disposeInlineCompletions() {},
+      });
+    };
+    mount();
+    const unsubscribe = subscribeEditorAi(mount);
+    return () => { disposed = true; unsubscribe(); registration?.dispose(); };
+  }, [path]);
+  useEffect(() => {
     if (!instance || !status.current) return;
     const node = status.current;
     node.textContent = options.keymap === 'standard' ? 'Standard keybindings' : `Loading ${options.keymap} keybindings…`;
@@ -123,5 +175,24 @@ export default function CodeEditor({ menuRequest, onReady, infrastructureDiagnos
     void attach().catch(e=>{if(!disposed) node.textContent = `Keymap could not load: ${String(e)}. Standard bindings remain available.`;});
     return ()=>{disposed=true;adapter?.dispose();node.textContent='';};
   },[instance,options.keymap]);
-  return <div className="editor-host"><EditorNavigation instance={instance} path={path} onToggleBreakpoint={()=>{const position=instance?.getPosition();if(position)onToggleBreakpoint(path,position.lineNumber);}}/><div className="editor-surface"><Editor height="100%" theme={resolvedTheme} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),...accessibleEditorOptions(accessibility,path),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div><div ref={status} className="keymap-status" aria-live="polite" /></div>;
+  async function proposeEdit(event: FormEvent) {
+    event.preventDefault();
+    const edit = editorAi().edit;
+    if (!edit || !selection.trim() || !instruction.trim()) return;
+    setEditBusy(true); setEditNote(''); setProposal(null);
+    try { setProposal(await edit(selection.slice(0, 20000), instruction)); }
+    catch (error) { setEditNote(String(error)); }
+    finally { setEditBusy(false); }
+  }
+  function acceptEdit() {
+    const model = instance?.getModel();
+    const range = instance?.getSelection();
+    if (!instance || !model || !range || proposal === null || range.isEmpty()) return;
+    instance.executeEdits('afteredit.selection-edit', [{ range, text: proposal }]);
+    setProposal(null); setInstruction('');
+    setEditNote('Accepted. Editor undo reverts this replacement.');
+  }
+  return <div className="editor-host"><EditorNavigation instance={instance} path={path} onToggleBreakpoint={()=>{const position=instance?.getPosition();if(position)onToggleBreakpoint(path,position.lineNumber);}}/><div className="editor-surface"><Editor height="100%" theme={resolvedTheme} path={path} language={languageForFilename(path)} value={value} onChange={v=>onChange(v??'')} onMount={setInstance} options={{...editorOptions(options),...accessibleEditorOptions(accessibility,path),glyphMargin:true}} loading={<p>Loading local editor…</p>} /></div>
+  {selection && editorAi().edit && <form className="selection-edit" onSubmit={event => void proposeEdit(event)}><p>Edit the selection ({selection.length.toLocaleString()} characters). Accept writes it through the editor, so undo reverts it. Snippet Tab is unchanged.</p><input aria-label="Selection edit instruction" value={instruction} onChange={event => setInstruction(event.target.value)} placeholder="What should replace the selection?" /><button disabled={editBusy || !instruction.trim()}>Propose replacement</button>{proposal !== null && <><pre aria-label="Proposed replacement">{proposal}</pre><button type="button" onClick={acceptEdit}>Accept</button><button type="button" onClick={() => setProposal(null)}>Reject</button></>}{editNote && <p role="status">{editNote}</p>}</form>}
+  <div ref={status} className="keymap-status" aria-live="polite" /></div>;
 }

@@ -1,5 +1,8 @@
 export type AgentAction =
  | {type:'read_file';path:string}
+ | {type:'list_directory';path:string}
+ | {type:'search_text';query:string}
+ | {type:'search_symbols';query:string}
  | {type:'edit_file';path:string;oldText:string;newText:string}
  | {type:'run_task';task:string}
  | {type:'inspect_run';runId?:number}
@@ -22,6 +25,8 @@ export function parseAction(text:string,tasks:string[]):AgentAction{
  }
  if(action.type==='propose_debug_launch'&&Number.isInteger(action.runId)&&action.runId>0&&typeof action.testId==='string'&&action.testId.length>0&&action.testId.length<=2000)return {type:'propose_debug_launch',runId:action.runId,testId:action.testId};
  if(action.type==='run_task'&&typeof action.task==='string'&&tasks.includes(action.task))return {type:'run_task',task:action.task};
+ if(action.type==='list_directory'&&typeof action.path==='string')return {type:'list_directory',path:action.path==='.'?'.':relativePath(action.path)};
+ if((action.type==='search_text'||action.type==='search_symbols')&&typeof action.query==='string'&&action.query.length>0&&action.query.length<=200)return {type:action.type,query:action.query};
  if((action.type==='read_file'||action.type==='edit_file')&&typeof action.path==='string'){
   const path=relativePath(action.path);
   if(action.type==='read_file')return {type:'read_file',path};
@@ -34,7 +39,22 @@ export function replaceUnique(text:string,oldText:string,newText:string):string{
  if(!oldText||start<0||text.indexOf(oldText,start+1)>=0)throw new Error('Edit requires exactly one matching original block; refresh the file and try again');
  return text.slice(0,start)+newText+text.slice(start+oldText.length);
 }
+export type AgentChange={path:string;before:string;after:string};
+/** Roll a run's edits back only while the buffer still equals what that edit wrote. */
+export function rollbackChanges(changes:AgentChange[],current:Record<string,string>):{values:Record<string,string>;skipped:string[]}{
+ const values={...current};const skipped:string[]=[];
+ for(const change of [...changes].reverse()){
+  if(values[change.path]!==change.after){skipped.push(change.path);continue;}
+  values[change.path]=change.before;
+ }
+ const restored:Record<string,string>={};
+ for(const path of new Set(changes.map(change=>change.path)))if(values[path]!==current[path])restored[path]=values[path];
+ return {values:restored,skipped:[...new Set(skipped)]};
+}
 export const agentInstructions=`Act through one JSON action per response, without Markdown. Available actions:
+{"type":"list_directory","path":"."}
+{"type":"search_text","query":"literal text"}
+{"type":"search_symbols","query":"symbol name"}
 {"type":"read_file","path":"relative/file"}
 {"type":"edit_file","path":"relative/file","oldText":"exact unique existing text","newText":"replacement"}
 {"type":"run_task","task":"configured task name"}

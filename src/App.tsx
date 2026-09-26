@@ -27,13 +27,16 @@ import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
-import { relativePath, replaceUnique } from './agent';
+import { relativePath, replaceUnique, rollbackChanges, type AgentChange } from './agent';
 import { formatInspectDebug, formatInspectRun, prepareFailedTestLaunch } from './investigation';
 import { runMonitor } from './runMonitor';
 import { applyTextEdits, type FileEdits } from './workspaceEdit';
 import LanguagePanel from './LanguagePanel';
 import { detectBuildSystems, type ConnectedServer } from './languageServices';
 import SearchPanel from './SearchPanel';
+import FileTree from './FileTree';
+import { applyDrafts } from './drafts';
+import { retargetPath } from './fileOps';
 import ExtensionsPanel from './ExtensionsPanel';
 import { restoreExtensions, type Extension } from './extensions';
 import PreferencesPanel from './PreferencesPanel';
@@ -80,6 +83,8 @@ function App() {
   const [reveal,setReveal]=useState<{path:string;line:number}|null>(null);
   const [policyProblems,setPolicyProblems]=useState<InfrastructureDiagnostic[]>([]);
   const buffersRef=useRef(buffers);buffersRef.current=buffers;
+  const activeRef=useRef('');
+  const sideRef=useRef('');
   const [active, setActive] = useState('');
   const [diskChange,setDiskChange]=useState<{path:string;text?:string;error?:string}|null>(null);
   const [pendingEdit,setPendingEdit]=useState<PendingEdit|null>(null);
@@ -96,6 +101,10 @@ function App() {
   const [directory, setDirectory] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
   const [sidebarVisible,setSidebarVisible]=useState(true),[terminalVisible,setTerminalVisible]=useState(true);
+  const [aiSidebar,setAiSidebar]=usePersistedState('pref.aiSidebar','0');
+  const [split,setSplit]=useState(false),[side,setSide]=useState('');
+  const [treeTick,setTreeTick]=useState(0);
+  const [draftsReady,setDraftsReady]=useState(!isTauri());
   const [editorMenu,setEditorMenu]=useState<EditorMenuRequest>();
   const [terminalMenu,setTerminalMenu]=useState<EditorMenuRequest>();
   useEffect(()=>{if(terminalMenu)window.dispatchEvent(new CustomEvent('afteredit:terminal-command',{detail:terminalMenu.id}));},[terminalMenu]);
@@ -132,7 +141,12 @@ function App() {
   const dirtyRef = useRef(false);
   dirtyRef.current = sharedDirty || Object.values(buffers).some(b => b.value !== b.saved);
   const cancelled = useRef(false);
+  const [agentChanges,setAgentChanges]=useState<AgentChange[]>([]);
+  const agentChangesRef=useRef(agentChanges);agentChangesRef.current=agentChanges;
   const activeBuffer = buffers[active];
+  activeRef.current = active;
+  sideRef.current = side;
+  const sideBuffer = side ? buffers[side] : undefined;
   const value = activeBuffer?.value ?? scratch;
   const activeRoot = roots.filter(r => active.startsWith(r + '/') || active.startsWith(r + '\\')).sort((a,b) => b.length - a.length)[0] ?? (activeBuffer?.disk ? '' : root);
   rootRef.current = activeRoot;
@@ -154,7 +168,11 @@ function App() {
         catch {failures.push(path);}
       }
       if(disposed)return;
-      setRoots(session.roots);setRoot(session.root);setBuffers(restored);setActive(restored[session.active]?session.active:'');
+      let drafts: Array<{path:string;basis:string;value:string}> = [];
+      try { drafts = await invoke('restore_drafts'); if (!disposed) setDraftsReady(true); } catch (error) { failures.push(String(error)); }
+      const recovered = applyDrafts(restored, drafts);
+      failures.push(...recovered.skipped.map(path => path + ' (unsaved draft skipped; the file changed on disk)'));
+      setRoots(session.roots);setRoot(session.root);setBuffers(recovered.buffers);setActive(recovered.buffers[session.active]?session.active:'');
       if(session.directory)try{await browse(session.directory);}catch{failures.push(session.directory);}
       if(!disposed)setStatus(failures.length?'Session restored with unavailable files: '+failures.join(', '):'Previous session restored');
     }).catch(e=>{if(!disposed)report(e);}).finally(()=>{if(!disposed)setSessionReady(true);});
@@ -196,6 +214,49 @@ function App() {
     const timer=setTimeout(()=>{void invoke('save_session',{session:{roots,files:JSON.parse(sessionFiles),active,root,directory}}).catch(report);},300);
     return()=>clearTimeout(timer);
   },[sessionReady,roots,sessionFiles,active,root,directory]);
+  const draftKey = JSON.stringify(Object.entries(buffers).filter(([,buffer]) => buffer.disk && buffer.value !== buffer.saved).map(([path,buffer]) => [path, buffer.saved, buffer.value]));
+  useEffect(() => {
+    if (!sessionReady || !draftsReady || !isTauri()) return;
+    const timer = setTimeout(() => {
+      const drafts = Object.entries(buffersRef.current).filter(([,buffer]) => buffer.disk && buffer.value !== buffer.saved).map(([path,buffer]) => ({path, basis: buffer.saved, value: buffer.value}));
+      void invoke<{withheld:string[]}>('save_drafts', {drafts}).then(result => {
+        if (result.withheld.length) setStatus('Unsaved drafts were not stored because they look like secrets or are too large to scan: ' + result.withheld.map(basename).join(', '));
+      }).catch(report);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [sessionReady, draftsReady, draftKey]);
+  useEffect(() => {
+    if (!isTauri() || !sessionReady) return;
+    let disposed = false;
+    let off = () => {};
+    void invoke('watch_project', {root}).catch(report);
+    void listen<{paths:string[]}>('workspace:changed', event => {
+      if (disposed) return;
+      setTreeTick(tick => tick + 1);
+      for (const path of event.payload.paths) {
+        const before = buffersRef.current[path];
+        if (!before?.disk) continue;
+        void invoke<string>('read_file', {path}).then(text => {
+          const current = buffersRef.current[path];
+          if (!current) return;
+          const result = reconcileDisk(current, current.saved, text);
+          if (result.stale) return;
+          if (result.conflict) {
+            if (path === activeRef.current || path === sideRef.current) setDiskChange({path, text});
+            else setStatus(`${basename(path)} changed on disk while it has unsaved edits`);
+            return;
+          }
+          if (result.buffer !== current) {
+            setBuffers(buffers => {
+              const buffer = buffers[path];
+              return buffer ? {...buffers, [path]: reconcileDisk(buffer, current.saved, text).buffer} : buffers;
+            });
+          }
+        }).catch(() => {});
+      }
+    }).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }).catch(report);
+    return () => { disposed = true; off(); };
+  }, [sessionReady, root]);
   useEffect(() => {
     document.body.classList.toggle('theme-mac', theme === 'mac');
     document.body.classList.toggle('theme-win', theme !== 'mac');
@@ -235,11 +296,11 @@ function App() {
     }).then(unlisten => { if (disposed) unlisten(); else off = unlisten; }).catch(report);
     return () => { disposed = true; off?.(); };
   }, []);
-  async function reloadFile() {
-    if (!activeBuffer?.disk) return;
+  async function reloadFile(path = activeRef.current) {
+    const buffer = buffersRef.current[path];
+    if (!buffer?.disk) return;
     try {
-      if(activeBuffer.value!==activeBuffer.saved && !await invoke<boolean>('confirm_discard'))return;
-      const path = active;
+      if(buffer.value!==buffer.saved && !await invoke<boolean>('confirm_discard'))return;
       const text = await invoke<string>('read_file', { path });
       setBuffers(b => ({ ...b, [path]: { value: text, saved: text, disk: true } }));
       setStatus(`Reloaded ${basename(path)}`);
@@ -263,6 +324,14 @@ function App() {
       setBuffers(b => ({ ...b, [path]: { value: text, saved: text, disk: true } }));
     }
     setActive(path); setView('editor');
+  }
+  async function openSide(path: string) {
+    if (!path || path === activeRef.current) { setStatus('Choose another file for the second pane.'); return; }
+    if (!buffersRef.current[path]) {
+      const text = await invoke<string>('read_file', { path });
+      setBuffers(current => ({...current, [path]: {value: text, saved: text, disk: true}}));
+    }
+    setSide(path); setSplit(true); setView('editor');
   }
   async function choose(directory: boolean) {
     try {
@@ -311,18 +380,19 @@ function App() {
     finally { setPendingEdit(null); }
   }
 
-  async function save() {
-    if (!activeBuffer?.disk) { if (isTauri()) await saveAs(); else setStatus('Scratch saved locally'); return; }
-    let formatted = activeBuffer.value;
+  async function save(path = activeRef.current) {
+    const buffer = buffersRef.current[path];
+    if (!buffer?.disk) { if (isTauri()) await saveAs(buffer?.value ?? value, path); else setStatus('Scratch saved locally'); return; }
+    let formatted = buffer.value;
     if (config.editor.formatOnSave) {
       // Best effort: a missing or failing formatter must never block a save.
-      try { formatted = (await formatText(languageForFilename(active), formatted)).text; }
+      try { formatted = (await formatText(languageForFilename(path), formatted)).text; }
       catch (e) { setStatus(`Saved without formatting: ${String(e)}`); }
     }
-    const snapshot = savedText(formatted, config.editor), path = active;
-    if (snapshot !== activeBuffer.value) update(snapshot);
+    const snapshot = savedText(formatted, config.editor);
+    if (snapshot !== buffer.value) setBuffers(current => current[path] ? {...current, [path]: {...current[path], value: snapshot}} : current);
     try {
-      await invoke('save_file', { path, content: snapshot, expected: activeBuffer.saved });
+      await invoke('save_file', { path, content: snapshot, expected: buffer.saved });
       setBuffers(b => b[path]?({ ...b, [path]: { ...b[path], saved: snapshot } }):b);
       setStatus(`Saved ${basename(path)}`);
       window.dispatchEvent(new CustomEvent("afteredit:saved",{detail:{path,text:snapshot}}));
@@ -360,9 +430,11 @@ function App() {
     const path=await invoke<string>('project_file_path',{root:activeRoot,relative:relativePath(relative)});
     const disk=await invoke<string>('read_file',{path});
     const existing=buffersRef.current[path]??{value:disk,saved:disk,disk:true};
-    const value=replaceUnique(existing.value,oldText,newText);
+    const before=existing.value;
+    const value=replaceUnique(before,oldText,newText);
     buffersRef.current={...buffersRef.current,[path]:{...existing,value}};
     setBuffers(current=>({...current,[path]:{...existing,value}}));
+    setAgentChanges(changes=>[...changes,{path,before,after:value}]);
     return `Edited unsaved buffer ${relative}. Save it before running tasks.`;
   }
   /** Edits a language server wants to make in files other than the one on
@@ -394,6 +466,19 @@ function App() {
     }
     setRevision(n=>n+1);
   }
+  async function rollbackAgent(){
+    const current=Object.fromEntries(Object.entries(buffersRef.current).map(([path,buffer])=>[path,buffer.value]));
+    const result=rollbackChanges(agentChangesRef.current,current);
+    setBuffers(buffers=>{
+      const next={...buffers};
+      for(const [path,value] of Object.entries(result.values))if(next[path])next[path]={...next[path],value};
+      buffersRef.current=next;
+      return next;
+    });
+    setAgentChanges([]);
+    const restored=Object.keys(result.values).length;
+    return restored?`Restored ${restored} file${restored===1?'':'s'}${result.skipped.length?`; left files you changed after the run: ${result.skipped.join(', ')}`:''}.`:'No run edits could be rolled back. The buffers no longer match what the run wrote.';
+  }
   async function agentTask(name:string):Promise<string>{
     if(Object.entries(buffersRef.current).some(([path,b])=>(path.startsWith(activeRoot+'/')||path.startsWith(activeRoot+'\\'))&&b.value!==b.saved))throw new Error('Save modified project buffers before approving a task.');
     return run([name],true);
@@ -422,6 +507,7 @@ function App() {
     if(paths.some(path=>buffersRef.current[path]?.value!==buffersRef.current[path]?.saved) && !await invoke<boolean>('confirm_discard'))return;
     setBuffers(current=>Object.fromEntries(Object.entries(current).filter(([path])=>!paths.includes(path))));
     if(paths.includes(active))setActive('');
+    if(paths.includes(side))setSide('');
     setStatus('Editors closed');
   }
   async function saveAll() {
@@ -472,7 +558,9 @@ function App() {
       const paths=Object.keys(buffersRef.current).filter(path=>path.startsWith(root+'/'));
       if(paths.some(path=>buffersRef.current[path].value!==buffersRef.current[path].saved)&&!await invoke<boolean>('confirm_discard'))return;
       setBuffers(current=>Object.fromEntries(Object.entries(current).filter(([path])=>!paths.includes(path))));
-      setRoots(current=>current.filter(path=>path!==root));setRoot('');setDirectory('');setEntries([]);setActive('');return;
+      setRoots(current=>current.filter(path=>path!==root));setRoot('');setDirectory('');setEntries([]);setActive('');
+      if(side.startsWith(root+'/'))setSide('');
+      return;
     }
     if(id==='view.commands'||id==='view.open-editors'){setOpenEditorsOnly(id==='view.open-editors');setPalette(true);return;}
     if(id==='view.sidebar'){setSidebarVisible(v=>!v);return;}
@@ -524,16 +612,15 @@ function App() {
     <div className="main-content" inert={!sessionReady}>
       <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
         ['editor', Files, 'Files'], ['shared', Code, 'Shared workspace'], ['apple', Code, 'Apple development'], ['git', Code, 'Source control'], ['history', History, 'Local history'], ['http', Zap, 'HTTP requests'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
-      ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={view === id} className={view === id ? 'selected' : ''} onClick={() => {if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
+      ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={id==='ai'?aiSidebar==='1':view === id} className={(id==='ai'?aiSidebar==='1':view === id) ? 'selected' : ''} onClick={() => {if(id==='ai'){setAiSidebar(aiSidebar==='1'?'0':'1');setView('editor');return;}if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
       <aside style={{display:sidebarVisible?undefined:'none'}} id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
         <div className="sidebar-content"><button className="file-item" onClick={() => { setActive(''); setView('editor'); }}>Scratch</button>
-          {directory && <div className="folder-location"><span title={directory}>{basename(directory)}</span><button aria-label="Refresh folder" onClick={() => void browse(directory).catch(report)}>↻</button>{directory !== root && <button onClick={() => void browse(parent(directory)).catch(report)}>Up</button>}</div>}
-          {entries.map(entry => <button className={`file-item ${active === entry.path ? 'active' : ''}`} key={entry.path} aria-label={`${entry.directory ? "Folder" : "File"}: ${entry.name}`} aria-current={active===entry.path ? "true" : undefined} title={entry.path} onClick={() => void (entry.directory ? (setActive(''), browse(entry.path)) : openFile(entry.path)).catch(report)}>{entry.directory ? '▸' : '·'} {entry.name}</button>)}
+          {root ? <FileTree root={root} active={active} tick={treeTick} onOpen={path => void openFile(path).catch(report)} onOpenSide={path => void openSide(path).catch(report)} onSelectDirectory={path => { setDirectory(path); void browse(path).catch(report); }} onRenamed={(from, to) => { setBuffers(current => Object.fromEntries(Object.entries(current).map(([path, buffer]) => [retargetPath(path, from, to), buffer]))); setActive(current => retargetPath(current, from, to)); setSide(current => retargetPath(current, from, to)); setTreeTick(tick => tick + 1); }} onDeleted={path => { setBuffers(current => Object.fromEntries(Object.entries(current).filter(([item]) => item !== path && !item.startsWith(path + '/') && !item.startsWith(path + '\\')))); if (active === path || active.startsWith(path + '/')) setActive(''); if (side === path || side.startsWith(path + '/')) setSide(''); setTreeTick(tick => tick + 1); }} report={report} /> : entries.map(entry => <button className={`file-item ${active === entry.path ? 'active' : ''}`} key={entry.path} aria-label={`${entry.directory ? "Folder" : "File"}: ${entry.name}`} aria-current={active===entry.path ? "true" : undefined} title={entry.path} onClick={() => void (entry.directory ? (setActive(''), browse(entry.path)) : openFile(entry.path)).catch(report)}>{entry.directory ? '▸' : '·'} {entry.name}</button>)}
         </div>
       </aside>
       <div className={`center-area layout-${layout === 'side-by-side' ? 'side-by-side' : 'stacked'}`}>
-        <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer?.disk} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button></div>
+        <main id="workspace" aria-label="Workspace" tabIndex={-1} data-focus-region className="editor-area"><div className="editor-tabs"><button className="editor-tab" onClick={() => { setView('editor'); setActive(''); }}>Scratch</button>{Object.entries(buffers).map(([path,b]) => <button key={path} aria-pressed={active===path} aria-label={`${path}${b.value!==b.saved ? ", unsaved changes" : ", saved"}`} title={path} className={`editor-tab ${active === path ? 'active' : ''}`} onClick={() => { setActive(path); setView('editor'); }}>{basename(path)}{b.value !== b.saved ? ' ●' : ''}</button>)}<button disabled={!isTauri()} onClick={() => void save()}>Save</button><button disabled={!isTauri()} onClick={() => void saveAs()}>Save as</button><button disabled={!activeBuffer?.disk} onClick={() => void reloadFile()}>Reload from disk (discard edits)</button><button onClick={() => setSplit(open => !open)}>{split ? 'Close split' : 'Split editor'}</button></div>
           {pendingEdit&&<EditorBridgeBanner
             pending={pendingEdit}
             dirty={!!buffers[pendingEdit.path]&&buffers[pendingEdit.path].value!==buffers[pendingEdit.path].saved}
@@ -542,18 +629,19 @@ function App() {
             onFinish={()=>void finishBridgedEdit(0)}
             onAbort={()=>void finishBridgedEdit(1)}
           />}
-          {diskChange?.path===active&&<section className="disk-change" aria-label="External file change">
+          {diskChange&&(diskChange.path===active||diskChange.path===side)&&<section className="disk-change" aria-label="External file change">
             <p role="status">{diskChange.error ? 'File unavailable on disk: '+diskChange.error : 'This file changed on disk. Your unsaved edits are preserved.'}</p>
             {diskChange.text!==undefined&&<><button onClick={()=>setReviewDisk(v=>!v)}>Review disk version</button>
-            <button onClick={()=>{if(window.confirm('Discard your unsaved edits and reload the current disk version?'))void reloadFile();}}>Reload disk version (discard edits)</button>
-            <button onClick={()=>{const text=diskChange.text!;setBuffers(b=>({...b,[active]:{...b[active],saved:text}}));setDiskChange(null);setStatus('Kept your edits. Save to replace the reviewed disk version.');}}>Keep my edits against this disk version</button>
+            <button onClick={()=>{if(window.confirm('Discard your unsaved edits and reload the current disk version?'))void reloadFile(diskChange.path);}}>Reload disk version (discard edits)</button>
+            <button onClick={()=>{const text=diskChange.text!;const path=diskChange.path;setBuffers(b=>b[path]?({...b,[path]:{...b[path],saved:text}}):b);setDiskChange(null);setStatus('Kept your edits. Save to replace the reviewed disk version.');}}>Keep my edits against this disk version</button>
             {reviewDisk&&<textarea readOnly aria-label="Current disk version" value={diskChange.text}/>}</>}
             <button onClick={()=>void saveAs()}>Save my buffer as a new file</button>
           </section>}
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
-            <div style={{display:(view==='editor'||view==='debug')?'flex':'none',flex:1,minWidth:0,minHeight:0,flexDirection:'column'}}>
+            <div className={split && sideBuffer && view==='editor' ? 'editor-split' : undefined} style={{display:(view==='editor'||view==='debug')?'flex':'none',flex:1,minWidth:0,minHeight:0,flexDirection:split && sideBuffer && view==='editor' ? 'row' : 'column'}}>
             <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} reveal={reveal} onRevealConsumed={()=>setReveal(null)} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>
+            {split && sideBuffer && view==='editor' && <ErrorBoundary key={side}><Suspense fallback={<p>Loading second editor…</p>}><CodeEditor onReady={()=>{}} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={side} value={sideBuffer.value} onChange={next => setBuffers(current => current[side] ? {...current, [side]: {...current[side], value: next}} : current)} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} reveal={null} onRevealConsumed={()=>{}} extensions={extensions} onSave={() => void save(side)} /></Suspense></ErrorBoundary>}
             </div>
             {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug} prepared={preparedDebug}/>}
             {view==='http' && <HttpPanel fileName={active||'scratch'} buffer={value} onOpenLine={line=>{setView('editor');setReveal({path:active||'inmemory://scratch.txt',line});}}/>}
@@ -563,9 +651,9 @@ function App() {
             {view === 'git' && <GitPanel key={root} root={root} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} onOpen={path=>void openFile(path).catch(report)}/>}
             <div style={{display:view==='shared'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><SharedWorkspacePanel root={activeRoot} onDirty={setSharedDirty}/></div>
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
-            {view === 'ai' && <AiPanel key={activeRoot} context={value} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onInspectRun={agentInspectRun} onProposeDebugLaunch={agentProposeDebugLaunch} onInspectDebug={agentInspectDebug} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} />}
+
             {view === 'languages' && <LanguagePanel initialLanguage={languageIntent.language} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
-            {view === 'search' && <SearchPanel root={activeRoot} servers={servers} onOpen={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} /> }
+            {view === 'search' && <SearchPanel root={activeRoot} servers={servers} dirty={Object.entries(buffers).filter(([,buffer])=>buffer.value!==buffer.saved).map(([path])=>path)} onReplaced={paths=>{for (const path of paths) void invoke<string>('read_file',{path}).then(text=>setBuffers(current=>current[path]?{...current,[path]:{value:text,saved:text,disk:true}}:current)).catch(report);}} onOpen={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} compatibility={compatibility} onCompatibility={enabled=>{setCompatibility(enabled);setView('editor');}} extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}
             {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><AccessibilityPanel onTestSound={()=>playCue('success')} value={accessibility} onChange={v=>setAccessibilityJSON(JSON.stringify(v))}/><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>
               <h2>Project and directory overrides</h2><p>Detected in explorer directory: {detectBuildSystems(entries.map(e=>e.name)).join(", ")||"No build manifests detected"}</p><p>Each .afteredit.json overrides its ancestors. Editor settings and named tasks merge; rules and instructions replace the parent value. Task cwd is relative to the project root.</p><p>Scope: {scope || 'Open a project folder'}</p><select aria-label="Build environment preset" value={preset} onChange={e => setPreset(e.target.value)}>{Object.keys(presets).map(p => <option key={p}>{p}</option>)}</select><button disabled={!scope} onClick={() => void configure()}>Create configuration in this directory</button><button onClick={() => setRevision(n => n + 1)}>Reload configuration</button>
@@ -586,6 +674,7 @@ function App() {
         </main>
         <section style={{display:terminalVisible?undefined:'none'}} id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} root={activeRoot} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
+      {activeRoot && <aside className="ai-sidebar" style={{display:aiSidebar==='1'?'flex':'none'}} aria-label="AI assistant"><AiPanel key={activeRoot} context={value} contextPath={active||'Scratch'} openFiles={Object.entries(buffers).filter(([,buffer])=>buffer.disk).map(([path,buffer])=>({path,text:buffer.value}))} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onInspectRun={agentInspectRun} onProposeDebugLaunch={agentProposeDebugLaunch} onInspectDebug={agentInspectDebug} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} changes={agentChanges.length} onRollback={rollbackAgent} onRunStart={()=>setAgentChanges([])} servers={servers} /></aside>}
     </div>
     <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>
     <span className="sr-only" role="status" aria-atomic="true">{debug.phase==="paused" ? `Debugger paused at ${debug.frame?.source?.path ?? "unknown source"}, line ${debug.frame?.line ?? "unknown"}` : ""}</span>

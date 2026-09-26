@@ -23,28 +23,49 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build --debug --bundles app
 ```
 
+## Workbench surfaces
+
+| Surface | What it is |
+| --- | --- |
+| Editor | Local buffers, the file tree, search and replace, tasks, debug, Git and the AI sidebar |
+| Shared GUI, plain CLI, TUI | One versioned buffer service. It does not share the main editor's unsaved buffers |
+| CLI over SSH | The shared service transport. The desktop window does not become a remote workspace |
+| Experimental extension editor | The active buffer only. No native project filesystem |
+| `$EDITOR` bridge | An explicit grant is required before an out-of-project file opens |
+
 ## Editing and startup
 
 Open individual UTF-8 text files or add multiple project folders. The explorer
-lists real directories, tabs retain separate buffers, and Cmd/Ctrl+S saves.
-Save As creates a new file from any buffer. Existing targets must be opened and
-edited using Save. Files larger than 8 MiB and binary content are rejected.
-Symlink entries are hidden; backend access resolves paths against selected roots.
+is a tree of the selected project: expand a folder, create a folder, rename,
+move, or delete. Those actions refuse the project root and leave symlinks
+unchanged. Tabs retain separate buffers. Split editor opens a second pane;
+Open to the side puts the selection there. Cmd/Ctrl+S saves the buffer that
+owns the editor. Save As creates a new file from any buffer. Existing targets
+must be opened and edited using Save. Files larger than 8 MiB and binary
+content are rejected. Symlink entries are hidden; backend access resolves paths
+against selected roots.
 
 Saves use a temporary sibling file and rename, preserve permissions, and reject
 externally changed content. Native close prompts when files have unsaved edits.
 Projects, open file paths and the active tab are restored from a native session
 file on restart. Saved paths are reauthorized by the backend; missing paths and
-retargeted symlinks are skipped. File contents are reread from disk: unsaved disk
-buffer edits are not persisted. Restoration is bounded to 100 files, 20 projects
-and 16 MiB of text. Scratch and personal preferences persist separately.
+retargeted symlinks are skipped. File contents are reread from disk. Unsaved
+edits to those files are stored as application drafts and restored when the
+file on disk still matches the edit's baseline. A draft that looks like a
+secret, or that is larger than the secret scan, is not written, and the status
+bar names it. Restoration is bounded to 100 files, 20 projects and 16 MiB of
+text. Scratch and personal preferences persist separately.
 
-The active disk file is checked every three seconds and when the app regains focus.
-Clean buffers reload external changes. Dirty buffers retain your edits and show
-the current disk version for review. Choose Reload to discard your edits, Keep my
-edits to accept the reviewed disk version as the save baseline, or Save as to make
-a separate file. Saves still reject later external changes. This is active-file
-polling, not a recursive filesystem watcher.
+The open project is watched recursively. File and folder changes refresh the
+tree. Clean buffers reload external changes. A dirty buffer keeps your edits;
+when that file is on screen, the disk review is shown. The active file is still
+checked every three seconds and when the app regains focus. Choose Reload to
+discard your edits, Keep my edits to accept the reviewed disk version as the
+save baseline, or Save as to make a separate file. Saves still reject a disk
+that changed after the baseline was read.
+
+The AI assistant stays mounted in a sidebar, so leaving the editor does not
+cancel the run. The AI button shows and hides that sidebar.
 
 The application shell loads separately from Monaco. Import/render failures show
 an error and recovery editor instead of clearing the workbench; preferences are
@@ -157,7 +178,7 @@ Users can change their caps. No paid provider calls are made by the test suite.
 
 Agent runs loop through model requests and tool observations with separate step
 and reservation caps, enforced together with daily caps before each request.
-The model can read existing project files, inspect this project's recent Run
+The model can list a project directory, search project text, read existing project files, inspect this project's recent Run
 monitor rows and already-captured debugger snapshots, propose the existing
 failed-test debug configuration (trust cleared, adapter not started), propose
 unique exact-text replacements, and request named configured tasks. Reads and
@@ -166,7 +187,13 @@ and debug handoff always require review. The agent cannot continue, step, or
 evaluate in the debugger. Proposed edits and tool observations are scanned for
 secrets before they land in a buffer or return to the model. Task environment values are not sent
 as model task metadata. File reads remain within the selected project root.
-Approved edits update unsaved buffers; use Save all modified project files before
+Approved edits update unsaved buffers and join that run's change set. Rollback
+restores those buffers only while they still match what the run wrote. The
+assistant shows the files and character count that will be sent, and keeps a
+per-project conversation locally. Turns that look like secrets are stored as a
+withheld marker. A checked selection can be rewritten through the editor's own
+undo. Ghost text is off until enabled; it does not replace snippet completion
+while the suggestion list is open. Use Save all modified project files before
 approving a build. Saves retain external-change checks. Stop prevents subsequent
 actions and cancels a running task; an in-flight model request may finish and
 retains its reservation. Keys and provider settings are captured for each run.
@@ -231,12 +258,18 @@ package validation and persistence; successful bundling is not an activation tes
 Bundled tokenizers cover many languages, with additional TOML, Makefile, Groovy and
 Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
 Other languages can connect installed LSP servers through Language Services.
-Diagnostics, completion, hover, definition and document formatting are supported
-when advertised by the server. Refactoring/code actions are not yet supported. The native Run and debug panel provides DAP debugging independently of executable extension support. Monaco's in-file find remains available. Remote development and desktop extension
-hosting are future work.
+Diagnostics, completion, hover, definition, references, rename, code actions,
+signature help and document formatting are supported when the server advertises
+them. Semantic tokens, inlay hints and call hierarchy are not registered.
+Workspace edits that create, rename or delete files are refused; text edits
+land in unsaved buffers. The native Run and debug panel provides DAP debugging
+independently of executable extension support. Monaco's in-file find remains
+available. The shared CLI can attach over SSH. The desktop GUI does not open a
+remote workspace, and there is no desktop Node extension host.
 
-The CLI interceptor in `src-tauri/afteredit-cli.sh` is still a sketch. Do not install
-it as `$EDITOR` yet.
+The `$EDITOR` interceptor in `src-tauri/afteredit-cli.sh` is still a sketch.
+Do not install it as `$EDITOR`. The workspace CLI documented under Shared CLI
+prototype is a separate, working client.
 
 ## Personal preferences and legacy keymaps
 
@@ -265,10 +298,14 @@ Import limits: 20 MiB compressed, 2 MiB per JSON file, 10 MiB total selected JSO
 Contribution paths cannot escape the archive's extension directory. Imported files
 are parsed as data and are never executed or extracted onto the filesystem.
 
-Project search is literal/case-sensitive, bounded to 200 matches, 20,000 entries
-and three seconds. It skips symlinks, generated/vendor directories, binary content
-and files over 1 MiB. Results open the matching line. Extension data is stored in
-local application preferences; a storage-capacity error is shown if it cannot fit.
+Project search is bounded to 200 matches, 20,000 entries and three seconds.
+It skips symlinks, generated/vendor directories, binary content and files over
+1 MiB. Case, whole word, regular expressions and include/exclude globs are
+optional. Preview replace shows the lines that would change. Apply writes only
+those reviewed files, skips unsaved buffers, and skips a file whose contents
+changed after the preview. Results open the matching line. Extension data is
+stored in local application preferences; a storage-capacity error is shown if
+it cannot fit.
 
 ### Named workflows and task tuning
 
@@ -294,9 +331,11 @@ Example: `"languageServers": { "go": { "command": "gopls", "args": ["serve"] } }
 Personal toolchain bin directories are searched for GUI launches. Servers must use
 UTF-16 positions. The client sends open/change/save/close notifications, handles
 full or incremental synchronization, and exposes advertised diagnostics, completion,
-hover, definitions and formatting through Monaco. Arbitrary server workspace edits
-and executable completion commands are not applied. Dynamic registration, semantic
-tokens and rename/code actions remain unsupported by the LSP client. Native DAP
+hover, definitions, references, rename, code actions, signature help and formatting
+through Monaco. Text workspace edits land in unsaved buffers. Create, rename and
+delete file operations are refused, and executable completion commands are not
+applied. Dynamic registration, semantic tokens, inlay hints and call hierarchy
+remain unsupported. Native DAP
 debugging is provided separately by Run and debug. Disconnected
 servers can be removed and reconnected in the Language Services panel.
 
@@ -465,6 +504,11 @@ editor. Diff helpers and external text conversions are disabled. Output is bound
 to 2 MB and Git commands time out after 30 seconds.
 
 Stage/unstage operates on one listed file (including the source of a rename).
+Working-tree hunks can be reviewed and staged one at a time. Conflicted files
+open in the editor; stage the file after the conflict markers are resolved.
+Fetch updates remote-tracking branches. Pull uses `--ff-only` and waits for a
+clean tree. Push shows the commits ahead of the existing upstream and sends
+only that reviewed HEAD, with no force and no new upstream.
 Save open buffers before staging. Enter a commit message, review all staged changes,
 then Commit reviewed changes. The backend scans staged blobs for secrets (never
 echoing matched values), checks the reviewed tree and commits a separate index

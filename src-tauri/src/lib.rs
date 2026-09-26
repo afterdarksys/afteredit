@@ -29,6 +29,7 @@ mod git;
 mod toolchain;
 
 use pty::PtyState;
+use std::sync::atomic::Ordering;
 use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -45,6 +46,7 @@ pub fn run() {
         .manage(PtyState::default())
         .manage(editor_bridge::EditorBridge::default())
         .manage(workspace::WorkspaceState::default())
+        .manage(workspace::WatchState::default())
         .manage(shared_workspace::ServiceJoins::default())
         .manage(tasks::TaskState::default())
         .manage(ai::AiState::default())
@@ -73,10 +75,13 @@ pub fn run() {
             toolchain::inspect_tools,
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
             git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
-            session::restore_session, session::save_session,
+            git::git_branches, git::git_checkout, git::git_fetch, git::git_pull, git::git_hunks, git::git_stage_hunk, git::git_push_preview, git::git_push,
+            session::restore_session, session::save_session, session::save_drafts, session::restore_drafts,
             workspace::choose_path,
             workspace::list_directory,
             workspace::read_file, workspace::project_file_path, workspace::workspace_search,
+            workspace::workspace_replace_preview, workspace::workspace_replace,
+            workspace::create_directory, workspace::rename_path, workspace::delete_path, workspace::watch_project,
             workspace::save_file,
             workspace::save_as,
             workspace::confirm_discard,
@@ -95,6 +100,7 @@ pub fn run() {
         .run(|app, event| {
             // Without this the shell outlives the window as an orphan.
             if let RunEvent::Exit = event {
+                app.state::<workspace::WatchState>().0.fetch_add(1, Ordering::Relaxed);
                 app.state::<PtyState>().shutdown();
                 app.state::<editor_bridge::EditorBridge>().shutdown();
                 app.state::<tasks::TaskState>().shutdown();

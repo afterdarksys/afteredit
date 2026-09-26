@@ -204,6 +204,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .sidebar { width: 245px; flex-shrink: 0; overflow: auto; }
 .sidebar select { width: 100%; }
 .explorer-actions { display: flex; gap: 6px; padding: 10px; }
+.file-actions { display: flex; gap: 4px; padding: 0 8px 8px; flex-wrap: wrap; }
+.file-actions button, .editor-tabs button { font-size: 12px; }
+.file-tree .file-row { display: flex; }
+.ai-sidebar { width: 360px; flex-shrink: 0; min-height: 0; overflow: auto; border-left: 1px solid var(--sidebar-border); background: var(--sidebar-bg); flex-direction: column; }
+.ai-sidebar .workbench-page { padding: 12px 14px; }
+.editor-split { min-width: 0; min-height: 0; }
+.editor-split > * { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.editor-split > * + * { border-left: 1px solid var(--sidebar-border); }
+.selection-edit { padding: 8px 12px; border-top: 1px solid var(--sidebar-border); }
+.selection-edit pre { max-height: 160px; overflow: auto; white-space: pre-wrap; }
 .sidebar .file-item { display: flex; width: 100%; border: 0; background: transparent; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sidebar .file-item.active { background: #264867; }
 .folder-location { display: flex; align-items: center; gap: 8px; padding: 8px; }

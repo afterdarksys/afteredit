@@ -3,6 +3,8 @@ export function reconcileDisk(buffer:FileBuffer, expectedSaved:string, disk:stri
   // An async check started before a save/reload must not undo that newer operation.
   if(buffer.saved!==expectedSaved)return {buffer,stale:true,conflict:false};
   if(disk===buffer.saved)return {buffer,stale:false,conflict:false};
+  // Our own save, or an external write that landed on the same text.
+  if(disk===buffer.value)return {buffer:{...buffer,saved:disk},stale:false,conflict:false};
   if(buffer.value===buffer.saved)return {buffer:{...buffer,value:disk,saved:disk},stale:false,conflict:false};
   return {buffer,stale:false,conflict:true};
 }
