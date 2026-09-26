@@ -187,6 +187,38 @@ and debug handoff always require review. The agent cannot continue, step, or
 evaluate in the debugger. Proposed edits and tool observations are scanned for
 secrets before they land in a buffer or return to the model. Task environment values are not sent
 as model task metadata. File reads remain within the selected project root.
+`AGENTS.md` at the project root is sent first. `.afteredit.json` instructions
+come after it and are the explicit override. A skill is a
+`.afteredit/skills/<name>/SKILL.md` file, chosen from the assistant or with
+`/name` in the agent goal. Skills are text. Task rules and the Git pre-commit
+hook are not agent instructions.
+
+MCP servers are the `mcp.servers` object in `.afteredit.json`. Connecting one
+lists its tools. The agent may request `call_mcp` only for a connected tool,
+and that request is always reviewed. The server command comes from the config,
+not from the model. Environment values cannot replace `PATH` or loader
+variables. A tool result that looks like a secret is withheld. This is process
+confinement, not an operating-system sandbox, and it is not a general shell.
+
+Configured tasks are different. On macOS every task runs under Seatbelt
+(`sandbox-exec`). The profile is built by the app from the project path. A task
+cannot supply it. Writes are limited to the project, temporary directories, and
+toolchain caches such as Cargo's registry and npm's cache. Directories on the
+task `PATH`, including `~/.cargo/bin`, stay read-only so a task cannot plant a
+later command. SSH keys, cloud credentials, kubeconfig, GnuPG, GitHub CLI
+credentials, and the keychain cannot be read. Network stays available unless
+the task sets `"network": false`. The interactive terminal is not sandboxed.
+Linux and Windows do not have this confinement yet, and the run monitor says
+so instead of pretending. This still is not a general shell.
+
+An agent run can propose a plan, which you edit before accepting. It can read
+the current diff, and a diff that looks like a secret is withheld. Findings
+are a reviewed list that opens the file at a line; they are not edits. A
+capture opens one localhost page in a fresh browser profile and keeps the
+screenshot. An isolated worktree is a separate checkout under
+`.afteredit/worktrees`. Opening it selects that project. None of these start
+a second unattended agent, and only one task runs at a time.
+
 Approved edits update unsaved buffers and join that run's change set. Rollback
 restores those buffers only while they still match what the run wrote. The
 assistant shows the files and character count that will be sent, and keeps a

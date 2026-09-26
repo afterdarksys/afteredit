@@ -3,7 +3,7 @@ export type TestSummary = { total: number; passed: number; failed: number; cance
 export type MonitoredRun = {
   id: number; root: string; cwd: string; command: string; args: string[];
   startedAt: number; durationMs?: number; status: 'running' | 'succeeded' | 'failed' | 'error' | 'cancelled' | 'timedOut' | 'spawnError'; code?: number;
-  output: string; error?: string; tests?: TestSummary; report?: TestReport; nativeId?: number; sequence?: number; taskName?: string; parentId?: number; reporter?: "node"|"go"; streamGap?:boolean;
+  output: string; error?: string; tests?: TestSummary; report?: TestReport; nativeId?: number; sequence?: number; taskName?: string; parentId?: number; reporter?: "node"|"go"; streamGap?:boolean; sandboxed?: boolean; network?: boolean;
 };
 
 // Recognize a complete Node TAP footer. Exit status remains the task outcome.
@@ -42,12 +42,12 @@ export function createRunMonitor(limit = 20) {
         return {...run,nativeId:event.runId,sequence:event.sequence,output,report,streamGap:run.streamGap||event.sequence!==(run.sequence??0)+1};
       });publish();
     },
-    finish(id: number, durationMs: number, result: { code: number; output: string; status?: MonitoredRun['status']; runId?:number; error?:string|null; sequence?:number; outputTruncated?:boolean; stdout?:string; stdoutTruncated?:boolean } | { error: string }) {
+    finish(id: number, durationMs: number, result: { code: number; output: string; status?: MonitoredRun['status']; runId?:number; error?:string|null; sequence?:number; outputTruncated?:boolean; stdout?:string; stdoutTruncated?:boolean; sandboxed?: boolean; network?: boolean } | { error: string }) {
       runs = runs.map(run => run.id !== id || run.status !== 'running' ? run : {
         ...run, durationMs: Math.max(0, durationMs),
         ...('code' in result ? {
           status: result.status ?? (result.code === 0 ? 'succeeded' as const : 'failed' as const), nativeId:result.runId??run.nativeId, error:result.error??undefined,
-          code: result.code, output: result.output.slice(-200000), tests: nodeTestSummary(result.output), report:(()=>{
+          code: result.code, output: result.output.slice(-200000), sandboxed: result.sandboxed, network: result.network, tests: nodeTestSummary(result.output), report:(()=>{
             if(!run.reporter)return run.report;
             if(!(result.stdoutTruncated??result.outputTruncated)){const parser=createTestParser(run.reporter);parser.push(result.stdout??result.output);return parser.finish();}
             const report=parsers.get(id)?.finish()??run.report;

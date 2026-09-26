@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Project guidance and reviewed MCP
+
+- `AGENTS.md` is sent before `.afteredit.json` instructions. Skills live in
+  `.afteredit/skills/<name>/SKILL.md` and are selected from the assistant or
+  with `/name` in the goal. They are text. Task rules and the Git hook are not
+  included.
+- MCP servers start only from `mcp.servers` in `.afteredit.json`. Each tool
+  call is reviewed. The model cannot choose the command. Tool results that
+  look like secrets are withheld. This is not an operating-system sandbox and
+  not a general shell.
+
+### Plans, review, local pages, and isolated checkouts
+
+- An agent run can propose a plan. The plan is edited before it is accepted.
+  A later step records short evidence, and finish names any step still open.
+- `review_diff` reads the current diff and withholds it when it looks like a
+  secret. Findings are a reviewed list linked to a file and line. They do not
+  edit the file.
+- `capture_page` opens one `http://127.0.0.1`, `localhost`, or `[::1]` page in
+  a fresh browser profile, keeps the screenshot, and stops the browser. It
+  does not click or type.
+- `propose_worktree` creates an isolated checkout under
+  `.afteredit/worktrees`. Opening it selects that project. One task still
+  runs at a time.
+
+### Task sandbox
+
+- On macOS, configured tasks run under Seatbelt. Writes stay in the project,
+  temporary directories, and toolchain caches. Credential files stay
+  unreadable. `"network": false` removes network access. The terminal is not
+  sandboxed, and the agent still has no general shell.
+
 ### Everyday editor, Git, and the agent loop
 
 - Project search supports case, whole word, regular expressions, include and

@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { runMonitor } from './runMonitor';
 
 export type Challenge = { action: string; expected: string; reason: string };
-export type TaskResult = { code: number; output: string; status?: "succeeded"|"failed"|"cancelled"|"timedOut"|"spawnError"|"error"; runId?:number; durationMs?:number; error?:string; sequence?:number; outputTruncated?:boolean; stdout?:string; stdoutTruncated?:boolean };
+export type TaskResult = { code: number; output: string; status?: "succeeded"|"failed"|"cancelled"|"timedOut"|"spawnError"|"error"; runId?:number; durationMs?:number; error?:string; sequence?:number; outputTruncated?:boolean; stdout?:string; stdoutTruncated?:boolean; sandboxed?: boolean; network?: boolean };
 type Task = Omit<WorkflowTask,'args'> & {args?:string[]};
 
 /**

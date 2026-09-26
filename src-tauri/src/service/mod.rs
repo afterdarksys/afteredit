@@ -680,6 +680,7 @@ impl Service {
                     directory.and_then(|dir| {
                         crate::tasks::execute(
                             task,
+                            service.root.clone(),
                             dir,
                             service.tasks.clone(),
                             format!("service-{id}"),

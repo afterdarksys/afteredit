@@ -28,6 +28,8 @@ import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
 import AiPanel from './AiPanel';
 import { relativePath, replaceUnique, rollbackChanges, type AgentChange } from './agent';
+import { composeGuidance, discoverSkills, type Skill } from './guidance';
+import type { SecretFinding } from './policy';
 import { formatInspectDebug, formatInspectRun, prepareFailedTestLaunch } from './investigation';
 import { runMonitor } from './runMonitor';
 import { applyTextEdits, type FileEdits } from './workspaceEdit';
@@ -125,6 +127,8 @@ function App() {
   const [view, setView] = useState<View>('editor');
   const [status, setStatus] = useState('Ready');
   const [config, setConfig] = useState<ProjectConfig>(defaults);
+  const [agentsDoc, setAgentsDoc] = useState('');
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [layers, setLayers] = useState<string[]>([]);
   const [configError, setConfigError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -263,12 +267,23 @@ function App() {
   }, [theme]);
   useEffect(() => {
     let stale = false;
-    if (!activeRoot || !scope) { setConfig(resolveConfig([{editor:personal}])); setLayers([]); setConfigError(''); return; }
+    if (!activeRoot || !scope) { setConfig(resolveConfig([{editor:personal}])); setLayers([]); setAgentsDoc(''); setSkills([]); setConfigError(''); return; }
     setConfigError('Loading configuration…');
     invoke<Array<{ path: string; value: unknown }>>('project_config', { root: activeRoot, directory: scope }).then(result => {
       if (stale) return;
       setConfig(resolveConfig([{editor:personal}, ...result.map(l => l.value)])); setLayers(result.map(l => l.path)); setConfigError('');
     }).catch(e => { if (!stale) { setConfig(defaults); setConfigError(String(e)); } });
+    void (async () => {
+      let agents = '';
+      try {
+        const text = await invoke<string>('read_file', {path: `${activeRoot}/AGENTS.md`});
+        const findings = await invoke<SecretFinding[]>('scan_buffer_secrets', {path: 'AGENTS.md', text});
+        agents = findings.length ? '' : text.slice(0, 32000);
+        if (findings.length && !stale) setStatus('AGENTS.md was not sent because it looks like it contains a secret.');
+      } catch { agents = ''; }
+      const found = await discoverSkills(activeRoot, path => invoke<Array<{name:string;path:string;directory:boolean}>>('list_directory', {path}), path => invoke<string>('read_file', {path}));
+      if (!stale) { setAgentsDoc(agents); setSkills(found); }
+    })();
     return () => { stale = true; };
   }, [activeRoot, scope, revision, personalJSON]);
   useEffect(() => { setTrusted(false); setPendingTasks([]); }, [activeRoot, scope, revision]);
@@ -674,7 +689,7 @@ function App() {
         </main>
         <section style={{display:terminalVisible?undefined:'none'}} id="terminal" aria-label="Terminal" tabIndex={-1} data-focus-region className="terminal-panel"><div className="terminal-header">TERMINAL · {isTauri() ? 'Local shell' : 'Desktop only'}</div><ErrorBoundary>{isTauri() ? <TerminalPanel theme={theme === 'mac' ? 'mac' : 'win'} root={activeRoot} /> : <p className="recovery">Run npm run tauri dev to use the native terminal.</p>}</ErrorBoundary></section>
       </div>
-      {activeRoot && <aside className="ai-sidebar" style={{display:aiSidebar==='1'?'flex':'none'}} aria-label="AI assistant"><AiPanel key={activeRoot} context={value} contextPath={active||'Scratch'} openFiles={Object.entries(buffers).filter(([,buffer])=>buffer.disk).map(([path,buffer])=>({path,text:buffer.value}))} instructions={config.instructions} root={activeRoot} tasks={config.tasks} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onInspectRun={agentInspectRun} onProposeDebugLaunch={agentProposeDebugLaunch} onInspectDebug={agentInspectDebug} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} changes={agentChanges.length} onRollback={rollbackAgent} onRunStart={()=>setAgentChanges([])} servers={servers} /></aside>}
+      {activeRoot && <aside className="ai-sidebar" style={{display:aiSidebar==='1'?'flex':'none'}} aria-label="AI assistant"><AiPanel key={activeRoot} context={value} contextPath={active||'Scratch'} openFiles={Object.entries(buffers).filter(([,buffer])=>buffer.disk).map(([path,buffer])=>({path,text:buffer.value}))} instructions={composeGuidance({agents: agentsDoc, instructions: config.instructions})} root={activeRoot} tasks={config.tasks} skills={skills} mcp={config.mcp} onRead={agentRead} onEdit={agentEdit} onSaveEdits={saveProjectEdits} onTask={agentTask} onInspectRun={agentInspectRun} onProposeDebugLaunch={agentProposeDebugLaunch} onInspectDebug={agentInspectDebug} onStopTask={()=>{cancelled.current=true;void invoke("cancel_task").catch(report);}} changes={agentChanges.length} onRollback={rollbackAgent} onRunStart={()=>setAgentChanges([])} servers={servers} onOpenFile={(path,line)=>{const full=path.startsWith('/')?path:`${activeRoot}/${path}`;void openFile(full).then(()=>setReveal({path:full,line})).catch(report);}} onOpenRoot={path=>{setRoots(current=>current.includes(path)?current:[...current,path]);setRoot(path);setActive('');void browse(path).catch(report);}} /></aside>}
     </div>
     <span className="sr-only" role="status" aria-atomic="true">{view}. {active || "Scratch"}{activeBuffer && activeBuffer.value!==activeBuffer.saved ? ", unsaved changes" : ""}</span>
     <span className="sr-only" role="status" aria-atomic="true">{debug.phase==="paused" ? `Debugger paused at ${debug.frame?.source?.path ?? "unknown source"}, line ${debug.frame?.line ?? "unknown"}` : ""}</span>

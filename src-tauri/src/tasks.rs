@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::Read,
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -27,6 +27,13 @@ pub struct Task {
     timeout_seconds: Option<u64>,
     #[serde(rename = "testReporter")]
     test_reporter: Option<String>,
+    /// Outbound network. Omitted or true keeps network. False removes it.
+    /// The model cannot change this at run time; it comes from project config.
+    #[serde(default = "default_network")]
+    network: bool,
+}
+fn default_network() -> bool {
+    true
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +48,8 @@ pub struct TaskResult {
     output_truncated: bool,
     stdout: String,
     stdout_truncated: bool,
+    sandboxed: bool,
+    network: bool,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,10 +227,12 @@ pub async fn run_task(
         }
         let _ = app.emit("task:event", event);
     });
+    let directory = std::path::PathBuf::from(directory);
     tauri::async_runtime::spawn_blocking(move || {
         execute(
             task,
-            directory.into(),
+            project,
+            directory,
             state,
             request_id.unwrap_or_default(),
             emit,
@@ -232,6 +243,7 @@ pub async fn run_task(
 }
 pub(crate) fn execute(
     mut task: Task,
+    root: std::path::PathBuf,
     directory: std::path::PathBuf,
     state: TaskState,
     request: String,
@@ -281,7 +293,38 @@ pub(crate) fn execute(
             return Err("Unknown test reporter".into());
         }
     }
-    let mut cmd = Command::new(&task.command);
+    let root = root.canonicalize().map_err(|e| format!("Cannot sandbox the project: {e}"))?;
+    let directory = directory
+        .canonicalize()
+        .map_err(|e| format!("Cannot sandbox the working directory: {e}"))?;
+    if !directory.starts_with(&root) {
+        return Err("Task working directory must be inside the project.".into());
+    }
+    let network = task.network;
+    if !command_available(&task.command) {
+        let mut j = journal.lock().unwrap();
+        let result = TaskResult {
+            code: -1,
+            output: String::new(),
+            status: "spawnError".into(),
+            run_id: id,
+            duration_ms: j.start.elapsed().as_millis() as u64,
+            error: Some(format!("Cannot start {}", task.command)),
+            sequence: j.sequence + 1,
+            output_truncated: false,
+            stdout: String::new(),
+            stdout_truncated: false,
+            sandboxed: false,
+            network,
+        };
+        j.event("finished", String::new(), Some(result.clone()));
+        return Ok(result);
+    }
+    let (mut cmd, sandboxed) = crate::sandbox::launch(
+        &task.command,
+        &root,
+        if network { crate::sandbox::Network::Allow } else { crate::sandbox::Network::Deny },
+    )?;
     // Finder launches with a minimal PATH; include common toolchain locations
     // without sourcing shell startup files or executing repository scripts.
     let mut paths: Vec<std::path::PathBuf> = std::env::var_os("PATH")
@@ -326,6 +369,8 @@ pub(crate) fn execute(
                 output_truncated: false,
                 stdout: String::new(),
                 stdout_truncated: false,
+                sandboxed,
+                network,
             };
             j.event("finished", String::new(), Some(result.clone()));
             return Ok(result);
@@ -403,10 +448,20 @@ pub(crate) fn execute(
         output_truncated: j.truncated,
         stdout: j.stdout.clone(),
         stdout_truncated: j.stdout_truncated,
+        sandboxed,
+        network,
     };
     j.event("finished", String::new(), Some(result.clone()));
     *guard = None;
     Ok(result)
+}
+fn command_available(command: &str) -> bool {
+    let path = std::path::Path::new(command);
+    if command.contains('/') {
+        path.is_file()
+    } else {
+        crate::toolpath::resolve_binary(command).is_some()
+    }
 }
 fn kill(pid: u32) {
     #[cfg(unix)]
@@ -415,7 +470,7 @@ fn kill(pid: u32) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let _ = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
     }
@@ -449,6 +504,7 @@ mod tests {
             env: None,
             timeout_seconds: Some(1),
             test_reporter: None,
+            network: true,
         }
     }
     #[test]
@@ -464,6 +520,7 @@ mod tests {
         let e = events.clone();
         let r = execute(
             task("printf before; sleep 5"),
+            std::env::temp_dir(),
             std::env::temp_dir(),
             TaskState::default(),
             "test".into(),
@@ -485,6 +542,7 @@ mod tests {
         let r = execute(
             task("printf ready; sleep 5"),
             std::env::temp_dir(),
+            std::env::temp_dir(),
             state,
             "test".into(),
             Arc::new(move |v| {
@@ -503,6 +561,7 @@ mod tests {
         let r = execute(
             task("printf out; printf err >&2; exit 3"),
             std::env::temp_dir(),
+            std::env::temp_dir(),
             TaskState::default(),
             "".into(),
             Arc::new(|_| {}),
@@ -511,10 +570,13 @@ mod tests {
         assert_eq!(r.code, 3);
         assert_eq!(r.status, "failed");
         assert!(r.output.contains("out") && r.output.contains("err"));
+        #[cfg(target_os = "macos")]
+        assert!(r.sandboxed);
         let mut t = task("");
         t.command = "/nonexistent/afteredit-tool".into();
         let r = execute(
             t,
+            std::env::temp_dir(),
             std::env::temp_dir(),
             TaskState::default(),
             "".into(),
@@ -522,6 +584,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(r.status, "spawnError");
+        assert!(!r.sandboxed);
     }
     #[test]
     fn native_node_reporter_emits_cases_and_retains_final_output() {
@@ -539,6 +602,7 @@ mod tests {
         let e = events.clone();
         let r = execute(
             t,
+            root.clone(),
             root.clone(),
             TaskState::default(),
             "node-test".into(),
@@ -558,6 +622,7 @@ mod tests {
         let r = execute(
             task("head -c 210000 /dev/zero | tr '\\0' x"),
             std::env::temp_dir(),
+            std::env::temp_dir(),
             TaskState::default(),
             "".into(),
             Arc::new(|_| {}),
@@ -573,6 +638,7 @@ mod tests {
         assert!(execute(
             task("exit 0"),
             std::env::temp_dir(),
+            std::env::temp_dir(),
             state,
             "".into(),
             Arc::new(|_| {})
@@ -587,6 +653,7 @@ mod tests {
         t.env = Some(std::collections::HashMap::from([("PATH".into(), "/tmp/evil".into())]));
         let err = execute(
             t,
+            std::env::temp_dir(),
             std::env::temp_dir(),
             TaskState::default(),
             "".into(),

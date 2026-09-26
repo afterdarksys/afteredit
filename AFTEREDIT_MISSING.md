@@ -61,11 +61,11 @@ These have the most direct impact on whether someone can use Afteredit as an eve
 - **Afteredit today:** Prompt, answer, run log and agent transcript live in React state/refs. The AI page is conditionally mounted. Saved editor sessions and workflow history do not persist AI conversations. [AI state](src/AiPanel.tsx), [agent state](src/AgentPanel.tsx), [view lifecycle](src/App.tsx).
 - **Missing deliverable:** Per-project conversation history, recoverable interrupted runs, resume, search/export and optional conversation branching. Explicitly control whether code-bearing transcripts are stored.
 
-### 6. MCP client and tool management — missing
+### 6. MCP client and tool management — partial
 
 - **Competitor reference:** Both products expose MCP integration. [Cursor MCP](https://cursor.com/docs/mcp), [Antigravity MCP](https://www.antigravity.google/docs/mcp/).
-- **Afteredit today:** The agent accepts a fixed set of built-in actions. The workspace JSON RPC service is not an MCP client. [Agent protocol](src/agent.ts), [workspace service](src-tauri/src/service/mod.rs).
-- **Missing deliverable:** Server configuration, stdio/HTTP connections, tool discovery, authentication, per-tool approval, cancellation and invocation logs; then resources and prompts.
+- **Afteredit today:** Stdio servers are configured only in the project-root `.afteredit.json` `mcp.servers` object. Connecting one lists its tools. `call_mcp` is always reviewed, and the model cannot choose the command. Loader and `GIT_*` environment variables are refused. Results that look like secrets are withheld, and the call is journaled without its contents. [MCP client](src-tauri/src/mcp.rs), [agent action](src/agent.ts).
+- **Missing deliverable:** HTTP transport, authentication, cancelling an in-flight call, resources, prompts, and a broader tool-management surface.
 
 ### 7. Broader agent file operations and a complete edit/test loop — partial
 
@@ -73,11 +73,11 @@ These have the most direct impact on whether someone can use Afteredit as an eve
 - **Afteredit today:** The agent can replace a unique nonempty string in an existing file and request a named task. It has no create/delete/rename action or general shell action; approved edits land in unsaved buffers. [Actions](src/agent.ts), [approval loop](src/AgentPanel.tsx).
 - **Missing deliverable:** Reviewed file creation/moves/deletions, coordinated multi-file edit sets, an explicit save-and-test handoff and reliable failure feedback. General shell execution is an optional expansion that should depend on execution isolation, not simply removing approvals.
 
-### 8. First-class planning and progress artifacts — missing
+### 8. First-class planning and progress artifacts — partial
 
 - **Competitor reference:** Cursor has reviewable Plan Mode; Antigravity exposes structured plans, walkthroughs, diagrams and other artifacts. [Cursor planning](https://cursor.com/docs/agent/plan-mode), [Antigravity artifacts](https://www.antigravity.google/docs/artifacts/).
-- **Afteredit today:** Agents have a goal, step budget and text log, with no plan document, task-state model or artifact review surface. [Agent panel](src/AgentPanel.tsx).
-- **Missing deliverable:** Editable plan before execution, tracked tasks, linked validation evidence and a final walkthrough distinguishing completed work from remaining limitations.
+- **Afteredit today:** `propose_plan` is edited in the agent review before it is accepted. `update_plan` records evidence for one step. Finish names steps that are still open. [Plan parsing](src/loop.ts), [agent panel](src/AgentPanel.tsx).
+- **Missing deliverable:** A saved plan document, diagrams, and a separate walkthrough artifact. The in-run plan is the tracked list.
 
 ### 9. Agent change sets and run-level rollback — partial
 
@@ -88,20 +88,20 @@ These have the most direct impact on whether someone can use Afteredit as an eve
 ### 10. Portable agent rules, skills, plugins and lifecycle hooks — partial
 
 - **Competitor reference:** Cursor exposes scoped rules, skills, plugins and hooks; Antigravity documents skills and agent lifecycle hooks. [Cursor customization](https://cursor.com/docs/customize-cursor), [Antigravity skills](https://www.antigravity.google/docs/skills/), [Antigravity hooks](https://www.antigravity.google/docs/hooks/).
-- **Afteredit today:** `.afteredit.json` instructions, save/manual task rules and Git pre-commit hooks exist. No agent skill discovery, standard instruction-file loading or agent lifecycle hook framework was found. [Workflow configuration](src/workflows.ts), [agent](src/agent.ts), [Git hooks](src-tauri/src/hooks.rs).
-- **Missing deliverable:** A documented instruction precedence model, `AGENTS.md` support, reusable `SKILL.md` workflows, slash-command invocation and approved pre/post-tool hooks. Task rules and Git hooks should remain separate concepts.
+- **Afteredit today:** `AGENTS.md` at the project root is sent first. `.afteredit.json` instructions follow it and override it. A skill is `.afteredit/skills/<name>/SKILL.md`, chosen in the assistant or with `/name` in the agent goal. Task rules and the Git pre-commit hook stay separate and are not sent. [Guidance](src/guidance.ts), [workflow configuration](src/workflows.ts), [Git hooks](src-tauri/src/hooks.rs).
+- **Missing deliverable:** Plugins, approved pre/post-tool lifecycle hooks, and slash commands beyond selecting one skill for the run.
 
-### 11. Parallel agents and isolated workspaces — missing
+### 11. Parallel agents and isolated workspaces — partial
 
 - **Competitor reference:** Cursor offers parallel agents across environments; Antigravity IDE documents parallel agents across workspaces and Antigravity also supports custom subagents. [Cursor Agents Window](https://cursor.com/docs/agent/agents-window), [Antigravity IDE](https://www.antigravity.google/docs/ide/overview/), [Custom subagents](https://www.antigravity.google/docs/subagents/).
-- **Afteredit today:** [AgentPanel](src/AgentPanel.tsx) tracks one current run. Multiple project roots and shared CLI buffers are not an agent scheduler.
-- **Missing deliverable:** Concurrent run management, isolated branches/worktrees, agent-specific permissions and budgets, task delegation and controlled integration of results.
+- **Afteredit today:** A reviewed `propose_worktree` creates a checkout under `.afteredit/worktrees` on branch `afteredit/<name>`. Opening it selects that project. The main checkout's uncommitted edits stay there. [Git worktrees](src-tauri/src/git.rs).
+- **Missing deliverable:** Two model loops at once, per-run budgets beyond the existing step cap, and automatic merge of the worktree. One task still runs at a time.
 
-### 12. Browser interaction and visual verification — missing
+### 12. Browser interaction and visual verification — partial
 
 - **Competitor reference:** Antigravity IDE can operate Chrome and capture screenshots/recordings; Cursor Design Mode connects selected running-page elements to agent edits. [Antigravity browser](https://www.antigravity.google/docs/ide/browser/), [Cursor Design Mode](https://cursor.com/docs/agent/design-mode).
-- **Afteredit today:** The HTTP client handles requests, and the repository has browser tests, but neither is an end-user browser agent. [HTTP panel](src/HttpPanel.tsx), [agent actions](src/agent.ts).
-- **Missing deliverable:** A controlled browser session, navigation/interaction tools, screenshot evidence and console/network inspection. Add element-to-source editing after the basic test-and-inspect loop works.
+- **Afteredit today:** A reviewed `capture_page` opens one `http://127.0.0.1`, `localhost`, or `[::1]` URL in a fresh browser profile, keeps a screenshot, and stops the process. The browser log is withheld when it looks like a secret. [Capture](src-tauri/src/browser.rs).
+- **Missing deliverable:** Clicking, typing, network logs, and element-to-source editing. The capture does not drive the page.
 
 ## Priority 2: ecosystem and advanced workflow gaps
 
@@ -109,8 +109,8 @@ These have the most direct impact on whether someone can use Afteredit as an eve
 | --- | --- | --- | --- |
 | 13 | Broad editor-extension compatibility — **partial** | [Web extension validation](src/webExtensions.ts) rejects Node-only packages, dependencies, proposed APIs and many contributions. The [compatibility editor](src/CompatibilityEditor.tsx) is a separate limited surface. Expand workspace APIs and contribution support; decide explicitly whether to build a desktop extension host. | Cursor's classic IDE has a VS Code extension ecosystem; this does not imply every extension is compatible or licensed for every editor. [Cursor migration guidance](https://docs.cursor.com/en/guides/migration/jetbrains). |
 | 14 | Integrated remote GUI development — **partial** | [CLI SSH transport](src-tauri/src/service/transport.rs) exists, but the [GUI backend](src-tauri/src/shared_workspace.rs) rejects remote endpoints. Connect remote buffers, terminal, tasks, LSP and DAP into the main editor as a coherent remote workspace. | Cursor documents its Remote SSH integration. [Remote connections](https://cursor.com/help/troubleshooting/network). |
-| 15 | Agent command sandbox and network policy — **missing** | Existing path checks, explicit task trust, secret scans and production confirmation are useful controls. They do not constitute OS isolation of arbitrary shell commands. [Task runner](src-tauri/src/tasks.rs), [production guard](src-tauri/src/guard.rs). Add isolation before granting broader autonomous execution. | Antigravity 2.0/CLI document filesystem and network restrictions for agent shell execution. [Terminal Sandbox](https://www.antigravity.google/docs/sandbox/). |
-| 16 | Dedicated AI code review — **missing** | [GitPanel](src/GitPanel.tsx) reviews changes for the user; [secrets](src-tauri/src/secrets.rs) scans credentials. Neither is an AI reviewer for correctness/regressions. Add a diff-aware review action with findings linked to files and evidence. | Cursor offers local Agent Review and hosted Bugbot PR review. [Agent Review](https://cursor.com/docs/agent/agent-review), [Bugbot](https://cursor.com/docs/bugbot). |
+| 15 | Agent command sandbox and network policy — **partial** | Configured tasks on macOS run under Seatbelt. Writes stay in the project, temp, and toolchain caches. SSH, cloud, kube, GnuPG, and keychain paths stay unreadable. `"network": false` removes network. [Task runner](src-tauri/src/tasks.rs), [sandbox](src-tauri/src/sandbox.rs). Still missing: the same confinement on Linux and Windows, sandboxing the interactive terminal, and any general agent shell. Do not add that shell by skipping the sandbox. | Antigravity 2.0/CLI document filesystem and network restrictions for agent shell execution. [Terminal Sandbox](https://www.antigravity.google/docs/sandbox/). |
+| 16 | Dedicated AI code review — **partial** | `review_diff` returns the current unstaged and staged diff and withholds it when it looks like a secret. `report_findings` is a reviewed list of path, line, and summary that opens the file. Findings are not edits. [Diff](src-tauri/src/git.rs), [findings](src/loop.ts). Still missing: a hosted pull-request reviewer. | Cursor offers local Agent Review and hosted Bugbot PR review. [Agent Review](https://cursor.com/docs/agent/agent-review), [Bugbot](https://cursor.com/docs/bugbot). |
 | 17 | Agent CLI and SDK — **partial** | Afteredit has a real [workspace CLI](src-tauri/src/service/cli.rs), including tasks and debugging. It lacks a headless AI task runner with conversation resume, tool events and machine-readable agent results. Build on the service instead of creating another unrelated CLI. | Cursor ships an agent CLI; Antigravity also provides CLI and SDK surfaces. [Cursor CLI](https://cursor.com/docs/cli/overview), [Antigravity documentation](https://www.antigravity.google/docs/overview). |
 | 18 | Hosted/background agents — **missing** | The local workspace service can outlive a client, but no hosted AI worker provisioning, durable agent queue or remote execution environment was found. [Workspace service](src-tauri/src/service/mod.rs). This is a separate infrastructure product decision. | Cursor Cloud Agents run in isolated remote development environments and continue without the local machine staying connected. [Cloud Agents](https://cursor.com/docs/cloud-agent). |
 | 19 | Scheduled and event-triggered AI work — **partial** | [Workflows](src/workflows.ts) support save/manual rules and reviewed configured tasks. Missing scheduled agent runs and issue/PR/webhook-triggered work. | Cursor Automations supports time/event triggers and configured agent tools. [Automations](https://cursor.com/docs/cloud-agent/automations). |
@@ -147,8 +147,8 @@ These affect the accuracy of Afteredit's offer even before new features are buil
 2. **Strengthen the everyday editor:** search/replace, file management, splits/sidebar and recovery; extend Git where users currently need the terminal.
 3. **Build durable AI foundations:** persistent sessions, agent search/context tools, coordinated changes and rollback. These are prerequisites for trustworthy longer runs.
 4. **Add immediate AI editing value:** inline selection edits and predictive completion, with explicit latency and quality targets.
-5. **Open the tool ecosystem:** MCP, portable instructions/skills and an execution sandbox; then expand file/shell actions.
-6. **Add verification and orchestration:** plan artifacts, browser testing, dedicated review and parallel isolated agents.
+5. **Open the tool ecosystem:** reviewed stdio MCP, portable instructions/skills, and a macOS Seatbelt sandbox for configured tasks are in. A general agent shell stays closed. Linux and Windows still need an equivalent sandbox.
+6. **Add verification and orchestration:** an editable in-run plan, diff findings, a localhost page capture, and isolated worktrees are in. Two concurrent model loops, click-through browser control, and a hosted pull-request reviewer are not.
 7. **Choose larger product bets deliberately:** desktop extension hosting, full remote GUI development, hosted agents and enterprise administration. These are substantial ongoing commitments, not small parity checkboxes.
 
 Afteredit's existing BYOK controls, reviewed mutations, accessibility work, infrastructure tooling and Apple workflows provide a useful product direction. The gaps above can be closed while retaining those strengths; copying the competitors' entire hosted-service footprint is optional.

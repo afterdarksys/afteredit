@@ -282,6 +282,106 @@ pub async fn git_push(app:tauri::AppHandle,state:tauri::State<'_,WorkspaceState>
  crate::journal::record_app(&app,"push","git push","",&reviewed,&recorded);
  Ok(result)
 }
+fn worktree_name(name:&str)->Result<(),String>{
+ if name.len()>41 || !name.chars().next().is_some_and(|c|c.is_ascii_lowercase()) || !name.chars().all(|c|c.is_ascii_lowercase()||c.is_ascii_digit()||c=='-') {
+  return Err("Worktree name must be a short lowercase identifier.".into());
+ }
+ Ok(())
+}
+fn worktree_base(root:&Path)->PathBuf{root.join(".afteredit/worktrees")}
+fn remember_worktrees(root:&Path)->Result<(),String>{
+ let git_dir=root.join(".git");
+ if !git_dir.is_dir(){return Err("Open the main repository to add a worktree.".into());}
+ let info=git_dir.join("info");
+ std::fs::create_dir_all(&info).map_err(|e|e.to_string())?;
+ let exclude=info.join("exclude");
+ let mut text=std::fs::read_to_string(&exclude).unwrap_or_default();
+ if !text.lines().any(|line|line.trim()==".afteredit/worktrees/"){
+  if !text.is_empty()&&!text.ends_with('\n'){text.push('\n');}
+  text.push_str(".afteredit/worktrees/\n");
+  std::fs::write(exclude,text).map_err(|e|e.to_string())?;
+ }
+ Ok(())
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct Worktree{name:String,path:String,branch:String}
+fn parse_worktrees(root:&Path,text:&str)->Vec<Worktree>{
+ let base=worktree_base(root);
+ let mut rows=Vec::new();let mut path="";let mut branch="";
+ for line in text.lines(){
+  if let Some(value)=line.strip_prefix("worktree "){if !path.is_empty(){push_worktree(&base,path,branch,&mut rows);}path=value;branch="";}
+  else if let Some(value)=line.strip_prefix("branch "){branch=value.strip_prefix("refs/heads/").unwrap_or(value);}
+  else if line.is_empty(){if !path.is_empty(){push_worktree(&base,path,branch,&mut rows);}path="";branch="";}
+ }
+ if !path.is_empty(){push_worktree(&base,path,branch,&mut rows);}
+ rows
+}
+fn push_worktree(base:&Path,path:&str,branch:&str,rows:&mut Vec<Worktree>){
+ let Ok(base)=base.canonicalize() else {return};
+ let Ok(canonical)=Path::new(path).canonicalize() else {return};
+ let Ok(name)=canonical.strip_prefix(&base) else {return};
+ let Some(name)=name.to_str() else {return};
+ if name.contains('/')||worktree_name(name).is_err(){return;}
+ rows.push(Worktree{name:name.into(),path:canonical.to_string_lossy().into_owned(),branch:branch.into()});
+}
+pub(crate) fn list_worktrees(root:&Path)->Result<Vec<Worktree>,String>{
+ let listed=success(git(root,&["worktree","list","--porcelain"])?)?;
+ Ok(parse_worktrees(root,&listed))
+}
+pub(crate) fn add_worktree(root:&Path,name:&str)->Result<Worktree,String>{
+ worktree_name(name)?;
+ if success(git(root,&["rev-parse","HEAD"])?).is_err(){return Err("Commit once before creating an isolated worktree.".into());}
+ let branch=format!("afteredit/{name}");
+ if git(root,&["rev-parse","--verify","--quiet",&format!("refs/heads/{branch}")])?.code==0{return Err("That worktree branch already exists.".into());}
+ if list_worktrees(root)?.len()>=3{return Err("Three isolated worktrees already exist.".into());}
+ remember_worktrees(root)?;
+ let path=worktree_base(root).join(name);
+ if path.exists(){return Err("That worktree path already exists.".into());}
+ std::fs::create_dir_all(path.parent().unwrap()).map_err(|e|e.to_string())?;
+ success(git(root,&["worktree","add","-b",&branch,"--",path.to_str().ok_or("Worktree path is not text")?,"HEAD"])?)?;
+ list_worktrees(root)?.into_iter().find(|row|row.name==name).ok_or_else(||"The worktree was created but could not be listed.".into())
+}
+pub(crate) fn remove_worktree(root:&Path,name:&str)->Result<(),String>{
+ worktree_name(name)?;
+ let row=list_worktrees(root)?.into_iter().find(|row|row.name==name).ok_or("That isolated worktree is not one AfterEdit created.")?;
+ success(git(root,&["worktree","remove","--",&row.path])?)?;
+ Ok(())
+}
+pub(crate) fn review_diff(root:&Path)->Result<String,String>{
+ let unstaged=success(git(root,&["diff","--no-color","--no-ext-diff","--no-textconv"])?)?;
+ let staged=success(git(root,&["diff","--cached","--no-color","--no-ext-diff","--no-textconv"])?)?;
+ let status=parse_status(&success(git(root,&["status","--porcelain=v1","-z","--untracked-files=all"])?)?)?;
+ let mut text=String::new();
+ if !unstaged.is_empty(){text.push_str("# Unstaged\n");text.push_str(&unstaged);}
+ if !staged.is_empty(){text.push_str("\n# Staged\n");text.push_str(&staged);}
+ let untracked:Vec<_>=status.iter().filter(|row|row.index=="?").map(|row|row.path.clone()).collect();
+ if !untracked.is_empty(){text.push_str("\n# Untracked names only\n");for name in untracked{text.push_str(&name);text.push('\n');}}
+ if text.trim().is_empty(){text="No unstaged or staged changes.".into();}
+ if text.len()>60_000{let mut cut=60_000;while !text.is_char_boundary(cut){cut-=1;}text.truncate(cut);text.push_str("\n[Diff truncated]");}
+ if !crate::secrets::scan_text(&text,"diff").is_empty(){return Err("Diff withheld because it looks like a secret.".into());}
+ Ok(text)
+}
+#[tauri::command]
+pub async fn git_worktrees(state:tauri::State<'_,WorkspaceState>,root:String)->Result<Vec<Worktree>,String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||list_worktrees(&root)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn git_worktree_add(state:tauri::State<'_,WorkspaceState>,root:String,name:String)->Result<Worktree,String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||add_worktree(&root,&name)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn git_worktree_remove(state:tauri::State<'_,WorkspaceState>,root:String,name:String)->Result<(),String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||remove_worktree(&root,&name)).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn git_review_diff(state:tauri::State<'_,WorkspaceState>,root:String)->Result<String,String>{
+ let root=repository(&state,&root)?;
+ tauri::async_runtime::spawn_blocking(move||review_diff(&root)).await.map_err(|e|e.to_string())?
+}
 #[cfg(test)]
 mod mutation_tests{
  use super::*;
@@ -398,5 +498,28 @@ mod mutation_tests{
   assert_ne!(moved.head,stale);
   std::fs::remove_dir_all(&dir).unwrap();
   std::fs::remove_dir_all(&bare).unwrap();
+ }
+ #[test]fn worktree_keeps_the_main_checkout_separate(){
+  let dir=repo("worktree");
+  assert!(add_worktree(&dir,"../x").is_err());
+  let created=add_worktree(&dir,"probe").unwrap();
+  assert!(created.path.ends_with(".afteredit/worktrees/probe"));
+  assert_eq!(std::fs::read_to_string(std::path::Path::new(&created.path).join("file.txt")).unwrap(),"one\n");
+  std::fs::write(dir.join("file.txt"),"dirty\n").unwrap();
+  assert_eq!(std::fs::read_to_string(std::path::Path::new(&created.path).join("file.txt")).unwrap(),"one\n");
+  remove_worktree(&dir,"probe").unwrap();
+  assert!(!std::path::Path::new(&created.path).exists());
+  std::fs::remove_dir_all(dir).unwrap();
+ }
+ #[test]fn review_diff_shows_a_change_and_withholds_a_secret(){
+  let dir=repo("review-diff");
+  std::fs::write(dir.join("file.txt"),"two\n").unwrap();
+  let diff=review_diff(&dir).unwrap();
+  assert!(diff.contains("+two"),"{diff}");
+  std::fs::write(dir.join("file.txt"),"aws_access_key_id = AKIA4NPQ2XZJ7KLMWVR3\n").unwrap();
+  let refused=review_diff(&dir).unwrap_err();
+  assert!(refused.contains("withheld"),"{refused}");
+  assert!(!refused.contains("AKIA"));
+  std::fs::remove_dir_all(dir).unwrap();
  }
 }

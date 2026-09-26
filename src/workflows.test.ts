@@ -28,6 +28,8 @@ test('task variables remain literal argv and timeout settings are validated',()=
  assert.deepEqual(task.args,['/repo/a $(whoami).go','a $(whoami).go']);
  assert.throws(()=>expandTask({command:'echo',args:['${unknown}']},{project:'/repo',file:''}));
  assert.throws(()=>resolveConfig([{tasks:{test:{command:'go',args:[],timeoutSeconds:0}}}]));
+ assert.equal(resolveConfig([{tasks:{test:{command:'go',args:['test'],network:false}}}]).tasks.test.network, false);
+ assert.throws(()=>resolveConfig([{tasks:{test:{command:'go',args:[],network:'yes'}}}]));
 });
 import { detectBuildSystems } from './languageServices.ts';
 test('mixed build manifests and scoped language servers are recognized',()=>{
@@ -35,4 +37,7 @@ test('mixed build manifests and scoped language servers are recognized',()=>{
  const config=resolveConfig([{languageServers:{go:{command:'gopls',args:['serve']}}},{languageServers:{go:{command:'/tools/gopls',args:[]}}}]);
  assert.equal(config.languageServers.go.command,'/tools/gopls');
  assert.throws(()=>resolveConfig([{languageServers:{go:{command:'gopls',args:'serve'}}}]));
+ const mcp=resolveConfig([{mcp:{servers:{docs:{command:'node',args:['server.mjs']}}}}]);
+ assert.equal(mcp.mcp.docs.command,'node');
+ assert.throws(()=>resolveConfig([{mcp:{servers:{'../x':{command:'node',args:[]}}}}]));
 });

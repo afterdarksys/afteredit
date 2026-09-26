@@ -21,7 +21,13 @@ test('investigation probes parse as reviewed actions and reject debugger control
  assert.deepEqual(parseAction('{"type":"search_text","query":"fn main"}',[]),{type:'search_text',query:'fn main'});
  assert.deepEqual(parseAction('{"type":"search_symbols","query":"PaymentService"}',[]),{type:'search_symbols',query:'PaymentService'});
  assert.throws(()=>parseAction('{"type":"search_text","query":""}',[]));
+ assert.deepEqual(parseAction('{"type":"call_mcp","server":"docs","tool":"echo","arguments":{"q":"x"}}',[]),{type:'call_mcp',server:'docs',tool:'echo',arguments:{q:'x'}});
+ assert.throws(()=>parseAction('{"type":"call_mcp","server":"../x","tool":"echo"}',[]));
  assert.throws(()=>parseAction('{"type":"list_directory","path":"../secret"}',[]));
+ assert.deepEqual(parseAction('{"type":"propose_plan","steps":[{"id":"read","text":"Read the diff"}]}',[]),{type:'propose_plan',steps:[{id:'read',text:'Read the diff'}]});
+ assert.deepEqual(parseAction('{"type":"review_diff"}',[]),{type:'review_diff'});
+ assert.throws(()=>parseAction('{"type":"capture_page","url":"https://example.com"}',[]));
+ assert.throws(()=>parseAction('{"type":"propose_worktree","name":"../x"}',[]));
 });
 test('rollback restores a run only while later edits still match',()=>{
  const changes=[{path:'a.ts',before:'one',after:'two'},{path:'a.ts',before:'two',after:'three'}];

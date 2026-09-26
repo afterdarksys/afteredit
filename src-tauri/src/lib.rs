@@ -2,6 +2,7 @@ pub mod service;
 mod shared_workspace;
 mod menu;
 mod apple;
+mod browser;
 mod ai;
 mod ai_stream;
 mod dap;
@@ -15,12 +16,14 @@ mod history;
 mod hooks;
 mod http_client;
 mod journal;
+mod mcp;
 mod lsp_installer;
 mod policy;
 mod secrets;
 mod pty;
 mod pty_gate;
 mod toolpath;
+mod sandbox;
 mod tasks;
 mod workspace;
 mod session;
@@ -52,6 +55,7 @@ pub fn run() {
         .manage(ai::AiState::default())
         .manage(dap::DapState::default())
         .manage(lsp::LspState::default())
+        .manage(mcp::McpState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -76,6 +80,8 @@ pub fn run() {
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
             git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
             git::git_branches, git::git_checkout, git::git_fetch, git::git_pull, git::git_hunks, git::git_stage_hunk, git::git_push_preview, git::git_push,
+            git::git_worktrees, git::git_worktree_add, git::git_worktree_remove, git::git_review_diff,
+            browser::capture_page,
             session::restore_session, session::save_session, session::save_drafts, session::restore_drafts,
             workspace::choose_path,
             workspace::list_directory,
@@ -93,7 +99,8 @@ pub fn run() {
             registry::registry_search, registry::registry_download,
             lsp::lsp_start,lsp::lsp_request,lsp::lsp_notify,lsp::lsp_stop,
             dap::dap_start,dap::dap_request,dap::dap_stop,
-            ai::ask_ai, ai::cancel_ai
+            ai::ask_ai, ai::cancel_ai,
+            mcp::mcp_connect, mcp::mcp_call, mcp::mcp_stop
         ])
         .build(tauri::generate_context!())
         .expect("error while building AfterEdit")
@@ -105,6 +112,7 @@ pub fn run() {
                 app.state::<editor_bridge::EditorBridge>().shutdown();
                 app.state::<tasks::TaskState>().shutdown();
                 app.state::<lsp::LspState>().shutdown();
+                app.state::<mcp::McpState>().shutdown();
                 app.state::<dap::DapState>().shutdown();
             }
         });
@@ -124,10 +132,11 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 24] = [
+        let modules: [(&str, &str); 26] = [
             ("ai.rs", include_str!("ai.rs")),
             ("shared_workspace.rs", include_str!("shared_workspace.rs")),
             ("apple.rs", include_str!("apple.rs")),
+            ("browser.rs", include_str!("browser.rs")),
             ("dap.rs", include_str!("dap.rs")),
             ("context.rs", include_str!("context.rs")),
             ("editor_bridge.rs", include_str!("editor_bridge.rs")),
@@ -138,6 +147,7 @@ mod registration_tests {
             ("http_client.rs", include_str!("http_client.rs")),
             ("git.rs", include_str!("git.rs")),
             ("journal.rs", include_str!("journal.rs")),
+            ("mcp.rs", include_str!("mcp.rs")),
             ("lsp.rs", include_str!("lsp.rs")),
             ("lsp_installer.rs", include_str!("lsp_installer.rs")),
             ("menu.rs", include_str!("menu.rs")),

@@ -2,14 +2,15 @@ import { infrastructureTasks } from './infrastructure.ts';
 import { debugConfig, type DebugConfig } from './debugging.ts';
 import type { ServerConfig } from './languageServices.ts';
 import { editorDefaults, validateEditor, type EditorPreferences } from './preferences.ts';
-export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number; testReporter?: "node"|"go"; debugConfiguration?: string };
+export type Task = { command: string; args: string[]; cwd?: string; env?: Record<string, string>; dependsOn?: string[]; timeoutSeconds?: number; testReporter?: "node"|"go"; debugConfiguration?: string; network?: boolean };
 export type Rule = { event: 'save' | 'manual'; pattern: string; tasks: string[]; exclude?: string[]; enabled?: boolean };
-export type ProjectConfig = { editor: EditorPreferences; debug: Record<string,DebugConfig>; tasks: Record<string, Task>; rules: Rule[]; languageServers: Record<string,ServerConfig>; workflows: Record<string,string[]>; instructions: string };
-export const defaults: ProjectConfig = { editor: editorDefaults, debug: {}, tasks: {}, rules: [], languageServers: {}, workflows: {}, instructions: '' };
+export type McpServer = { command: string; args: string[]; env?: Record<string, string> };
+export type ProjectConfig = { editor: EditorPreferences; debug: Record<string,DebugConfig>; tasks: Record<string, Task>; rules: Rule[]; languageServers: Record<string,ServerConfig>; workflows: Record<string,string[]>; instructions: string; mcp: Record<string, McpServer> };
+export const defaults: ProjectConfig = { editor: editorDefaults, debug: {}, tasks: {}, rules: [], languageServers: {}, workflows: {}, instructions: '', mcp: {} };
 function record(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 function strings(v: unknown): v is string[] { return Array.isArray(v) && v.every(x => typeof x === 'string'); }
 export function resolveConfig(layers: unknown[]): ProjectConfig {
-  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, debug: {}, tasks: {}, languageServers: {}, workflows: {} };
+  const result: ProjectConfig = { ...defaults, editor: { ...defaults.editor }, debug: {}, tasks: {}, languageServers: {}, workflows: {}, mcp: {} };
   for (const layer of layers) {
     if (!record(layer)) throw new Error('Configuration must be an object');
     if (layer.editor !== undefined) {
@@ -27,6 +28,7 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
         if(task.timeoutSeconds!==undefined && (!Number.isInteger(task.timeoutSeconds)||Number(task.timeoutSeconds)<1||Number(task.timeoutSeconds)>3600)) throw new Error(`Invalid timeout in ${id}`);
         if(task.testReporter!==undefined && !['node','go'].includes(String(task.testReporter))) throw new Error(`Invalid test reporter in ${id}`);
         if(task.debugConfiguration!==undefined && typeof task.debugConfiguration!=='string') throw new Error(`Invalid debug configuration in ${id}`);
+        if(task.network!==undefined && typeof task.network!=='boolean') throw new Error(`Invalid network policy in ${id}`);
         result.tasks[id] = task as Task;
       }
     }
@@ -37,6 +39,18 @@ export function resolveConfig(layers: unknown[]): ProjectConfig {
     }
     if(layer.languageServers!==undefined){if(!record(layer.languageServers))throw new Error('languageServers must be an object');for(const [language,server]of Object.entries(layer.languageServers)){if(!/^[a-z][a-z0-9_-]*$/.test(language)||!record(server)||typeof server.command!=='string'||!strings(server.args)||(server.documentLanguage!==undefined&&typeof server.documentLanguage!=='string')|| (server.env!==undefined&&(!record(server.env)||!Object.values(server.env).every(v=>typeof v==='string'))))throw new Error('Invalid language server');result.languageServers[language]=server as ServerConfig;}}
     if(layer.workflows!==undefined){if(!record(layer.workflows))throw new Error('workflows must be an object');for(const [name,ids] of Object.entries(layer.workflows)){if(['__proto__','constructor','prototype'].includes(name)||!strings(ids))throw new Error('Invalid named workflow');result.workflows[name]=ids;}}
+    if (layer.mcp !== undefined) {
+      if (!record(layer.mcp)) throw new Error('mcp must be an object');
+      const servers = layer.mcp.servers ?? {};
+      if (!record(servers)) throw new Error('mcp.servers must be an object');
+      for (const [name, server] of Object.entries(servers)) {
+        if (!/^[A-Za-z][A-Za-z0-9_-]{0,40}$/.test(name) || ['__proto__','constructor','prototype'].includes(name)) throw new Error('Invalid MCP server name');
+        if (!record(server) || typeof server.command !== 'string' || !server.command.trim() || !strings(server.args) || server.args.length > 32) throw new Error(`MCP server ${name} needs a command and args`);
+        if (server.env !== undefined && (!record(server.env) || !Object.values(server.env as object).every(value => typeof value === 'string'))) throw new Error(`Invalid MCP environment in ${name}`);
+        const env = record(server.env) ? Object.fromEntries(Object.entries(server.env).map(([key, value]) => [key, String(value)])) : undefined;
+        result.mcp[name] = { command: server.command, args: server.args as string[], env };
+      }
+    }
     if (layer.instructions !== undefined) {
       if (typeof layer.instructions !== 'string') throw new Error('instructions must be text');
       result.instructions = layer.instructions;

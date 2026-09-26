@@ -1,5 +1,7 @@
 import AgentPanel, {type RunBudget} from './AgentPanel';
 import { bindEditorAi } from './editorAi';
+import type { Skill } from './guidance';
+import type { McpServer } from './workflows';
 import type { SecretFinding } from './policy';
 import type { ConnectedServer } from './languageServices';
 import type { Task } from './workflows';
@@ -7,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import {listen} from '@tauri-apps/api/event';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { usePersistedState } from './usePersistedState';
-export default function AiPanel({ context, contextPath = 'Active file', openFiles = [], instructions, root, tasks, onRead, onEdit, onTask, onInspectRun, onProposeDebugLaunch, onInspectDebug, onStopTask, onSaveEdits, changes = 0, onRollback, onRunStart, servers = [] }: { context:string;contextPath?:string;openFiles?:Array<{path:string;text:string}>;instructions:string;root:string;tasks:Record<string,Task>;servers?:ConnectedServer[];onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onInspectRun:(runId?:number)=>Promise<string>;onProposeDebugLaunch:(runId:number,testId:string)=>Promise<string>;onInspectDebug:()=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>;changes?:number;onRollback?:()=>Promise<string>;onRunStart?:()=>void }) {
+export default function AiPanel({ context, contextPath = 'Active file', openFiles = [], instructions, root, tasks, onRead, onEdit, onTask, onInspectRun, onProposeDebugLaunch, onInspectDebug, onStopTask, onSaveEdits, changes = 0, onRollback, onRunStart, servers = [], skills = [], mcp = {}, onOpenFile, onOpenRoot }: { context:string;contextPath?:string;openFiles?:Array<{path:string;text:string}>;instructions:string;root:string;tasks:Record<string,Task>;servers?:ConnectedServer[];skills?:Skill[];mcp?:Record<string,McpServer>;onRead:(path:string)=>Promise<string>;onEdit:(path:string,oldText:string,newText:string)=>Promise<string>;onTask:(name:string)=>Promise<string>;onInspectRun:(runId?:number)=>Promise<string>;onProposeDebugLaunch:(runId:number,testId:string)=>Promise<string>;onInspectDebug:()=>Promise<string>;onStopTask:()=>void;onSaveEdits:()=>Promise<void>;changes?:number;onRollback?:()=>Promise<string>;onRunStart?:()=>void;onOpenFile?:(path:string,line:number)=>void;onOpenRoot?:(path:string)=>void }) {
   const [stream,setStream]=usePersistedState('ai.stream',true);
   const activeRequests=useRef(new Set<string>()),dispatched=useRef(new Set<string>());
   const chatRequest=useRef<string|null>(null),agentRequest=useRef<string|null>(null),mounted=useRef(true);
@@ -35,6 +37,18 @@ export default function AiPanel({ context, contextPath = 'Active file', openFile
   const [picked, setPicked] = useState<string[] | null>(null);
   const [ghost, setGhost] = usePersistedState('ai.ghostText', false);
   const [history, setHistory] = useState<Array<{role:'user'|'assistant';text:string}>>([]);
+  const [skillName, setSkillName] = useState('');
+  const [mcpTools, setMcpTools] = useState<Array<{server:string;name:string;description:string}>>([]);
+  const [mcpStatus, setMcpStatus] = useState('');
+  const selectedSkill = skills.find(skill => skill.name === skillName) ?? null;
+  async function connectMcp(name: string) {
+    setMcpStatus(`Connecting ${name}…`);
+    try {
+      const tools = await invoke<Array<{name:string;description:string}>>('mcp_connect', {root, name});
+      setMcpTools(current => [...current.filter(tool => tool.server !== name), ...tools.map(tool => ({server: name, name: tool.name, description: tool.description}))]);
+      setMcpStatus(`${name} connected. Each tool call still needs approval.`);
+    } catch (error) { setMcpStatus(String(error)); }
+  }
   const ghostRequest = useRef<string|null>(null);
   const editRequest = useRef<string|null>(null);
   const files = openFiles.length ? openFiles : context ? [{path: contextPath, text: context}] : [];
@@ -98,7 +112,10 @@ export default function AiPanel({ context, contextPath = 'Active file', openFile
       {files.map(file => <label className="check" key={file.path}><input type="checkbox" checked={include && chosen.includes(file.path)} onChange={e => { setInclude(true); setPicked(current => { const base = current ?? chosen; return e.target.checked ? [...new Set([...base, file.path])] : base.filter(path => path !== file.path); }); }} />{file.path === contextPath ? 'Active: ' : ''}{file.path} ({file.text.length.toLocaleString()} characters)</label>)}
       <pre aria-label="Context preview">{sentContext.slice(0, 1500) || '(nothing from the editor will be sent)'}{sentContext.length > 1500 ? '\n…' : ''}</pre>
     </fieldset>
-    <details><summary>Project instructions sent with every request ({instructions.length.toLocaleString()} characters)</summary><pre>{instructions || '(none)'}</pre></details>
+    <details><summary>Project instructions sent with every request ({instructions.length.toLocaleString()} characters)</summary><pre>{instructions || '(none)'}</pre><p>AGENTS.md is included first. `.afteredit.json` instructions come after it. Task rules and the Git hook are not sent.</p></details>
+    <label>Skill for the next run<select aria-label="Skill" value={skillName} onChange={event => setSkillName(event.target.value)}><option value="">None</option>{skills.map(skill => <option key={skill.name} value={skill.name}>{skill.name} — {skill.description}</option>)}</select></label>
+    <p>A goal that starts with /name uses that skill instead. A skill is text. It does not run a command.</p>
+    <section aria-label="MCP servers"><h2>MCP</h2><p>Servers start only from <code>mcp.servers</code> in <code>.afteredit.json</code>. Connecting lists their tools. Calling one is a reviewed agent action. This process is not an operating-system sandbox and it is not a shell.</p>{Object.entries(mcp).map(([name, server]) => <p key={name}><button type="button" onClick={() => void connectMcp(name)}>Connect {name}</button> <button type="button" onClick={() => void invoke('mcp_stop', {root, name}).then(() => { setMcpTools(current => current.filter(tool => tool.server !== name)); setMcpStatus(`${name} stopped.`); }).catch(error => setMcpStatus(String(error)))}>Stop</button> <code>{server.command}</code></p>)}{mcpTools.map(tool => <p key={`${tool.server}.${tool.name}`}><code>{tool.server}.{tool.name}</code> {tool.description}</p>)}<p role="status">{mcpStatus}</p></section>
     <label className="check"><input type="checkbox" checked={ghost} onChange={e => setGhost(e.target.checked)} /> Ghost text in the editor. Each pause can spend a request. Tab accepts it only when the snippet list is closed.</label>
     {history.length > 0 && <details><summary>Conversation in this project ({history.length})</summary>{history.map((turn, index) => <p key={index}><strong>{turn.role}</strong> {turn.text}</p>)}<button type="button" onClick={() => { localStorage.removeItem('ai.history.v1:' + root); setHistory([]); }}>Clear saved conversation</button></details>}
     <label>Request<textarea rows={5} value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Review this code, propose a change, or plan a build workflow…" /></label>
@@ -106,7 +123,7 @@ export default function AiPanel({ context, contextPath = 'Active file', openFile
     <button disabled={busy || !isTauri() || !model.trim() || !prompt.trim()} onClick={() => void ask()}>{busy ? 'Waiting for provider…' : 'Send request'}</button>
     {busy&&<button onClick={()=>{cancel(chatRequest.current);setStatus("Cancelling request…");}}>Stop response</button>}
     <p role="status">{status}</p><pre className="ai-answer" tabIndex={0} aria-label="AI response">{answer}</pre>
-    <AgentPanel onCancelRequest={()=>cancel(agentRequest.current)} root={root} context={sentContext} tasks={tasks} ask={agentAsk} onRead={onRead} onEdit={onEdit} onTask={onTask} onInspectRun={onInspectRun} onProposeDebugLaunch={onProposeDebugLaunch} onInspectDebug={onInspectDebug} onStopTask={onStopTask} onSaveEdits={onSaveEdits} changes={changes} onRollback={onRollback} onRunStart={onRunStart} servers={servers}/>
+    <AgentPanel onCancelRequest={()=>cancel(agentRequest.current)} root={root} context={sentContext} tasks={tasks} ask={agentAsk} onRead={onRead} onEdit={onEdit} onTask={onTask} onInspectRun={onInspectRun} onProposeDebugLaunch={onProposeDebugLaunch} onInspectDebug={onInspectDebug} onStopTask={onStopTask} onSaveEdits={onSaveEdits} changes={changes} onRollback={onRollback} onRunStart={onRunStart} servers={servers} skills={skills} skill={selectedSkill} mcpTools={mcpTools} onOpenFile={onOpenFile} onOpenRoot={onOpenRoot}/>
     <p>Chat responses are suggestions. Agent runs use reviewed tool actions and separate per-run caps. External agent CLIs in the terminal have their own billing and limits.</p>
   </section>;
 }
