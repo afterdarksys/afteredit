@@ -69,11 +69,11 @@ build_tauri() {
     esac
 
     if [[ "$MODE" == "bundle" ]]; then
-        npm run tauri "${tauri_args[@]}" --bundles all
+        npm run tauri -- "${tauri_args[@]}" --bundles all
     elif [[ "$(uname -s)" == "Darwin" ]]; then
-        npm run tauri "${tauri_args[@]}" --bundles app
+        npm run tauri -- "${tauri_args[@]}" --bundles app
     else
-        npm run tauri "${tauri_args[@]}" --no-bundle
+        npm run tauri -- "${tauri_args[@]}" --no-bundle
     fi
 }
 
