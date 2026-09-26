@@ -50,7 +50,9 @@ install_deps() {
 
 # Build Tauri app
 build_tauri() {
-    local tauri_args=()
+    # Keep the array nonempty: macOS Bash 3.2 treats an empty array as
+    # unbound when expanding it under set -u.
+    local tauri_args=("build")
 
     case "$MODE" in
         dev)
@@ -67,11 +69,11 @@ build_tauri() {
     esac
 
     if [[ "$MODE" == "bundle" ]]; then
-        npm run tauri build "${tauri_args[@]}" --bundles all
+        npm run tauri "${tauri_args[@]}" --bundles all
     elif [[ "$(uname -s)" == "Darwin" ]]; then
-        npm run tauri build "${tauri_args[@]}" --bundles app
+        npm run tauri "${tauri_args[@]}" --bundles app
     else
-        npm run tauri build "${tauri_args[@]}" --no-bundle
+        npm run tauri "${tauri_args[@]}" --no-bundle
     fi
 }
 
