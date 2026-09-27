@@ -23,6 +23,17 @@ Verified on macOS 15.7.4 (24G508):
 - The opt-in `lldb_breakpoint_stack_variables_and_step` test passed using real
   Xcode LLDB: source breakpoint, threads, stack, local variables, watch, step,
   continue and termination. This verifies the native adapter, not its GUI.
+- `./build.sh release`: passed; produced the optimized standalone macOS app.
+  Installed `/Applications/AfterEdit.app` from source revision `ba7cfb8` (version
+  remains 0.1.0). A recursive comparison matched the built and installed bundles.
+  Installed executable SHA-256:
+  `6245d416342c62552c89c3cfe65b4ccd34a5d8ee4106e7ac5f412a12a03a020f`.
+- `scripts/test-cli.py` with `AFTEREDIT_TEST_BINARY` pointing to that installed
+  executable: passed private IPC, version conflicts, shared-buffer recovery,
+  real disk conflict/saves, task execution/cancellation, plain editing, wait,
+  PTY/TUI editing, file creation, delayed IPC frames and automatic service startup.
+- `scripts/test-cli-tools.py` against the same installed executable: passed real
+  clangd symbols and LLDB launch, breakpoint, threads, stack, scopes and variables.
 
 Native observation remains limited: both `AXIsProcessTrusted()` and
 `CGPreflightScreenCaptureAccess()` returned false for this session. Do not count
