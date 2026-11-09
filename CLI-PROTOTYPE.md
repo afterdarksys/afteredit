@@ -6,29 +6,29 @@ The prototype provides a headless workspace service, a plain terminal editor, an
 
 ```sh
 npm run cli:build
-./bin/afteredit --help
-./bin/afteredit .
-./bin/afteredit README.md --plain
-./bin/afteredit README.md --tui
+./bin/afteredit cli --help
+./bin/afteredit cli .
+./bin/afteredit cli README.md --plain
+./bin/afteredit cli README.md --tui
 ```
 
-The repository launcher uses the locally built CLI. Add this repository's `bin` directory to PATH to use `afteredit` elsewhere. It prefers the debug binary when both builds exist. The regular desktop executable also accepts these commands; starting it without arguments opens the GUI, and `--gui` explicitly opens the GUI.
+`afteredit` opens the desktop GUI. `afteredit cli` and `afteredit-cli` open the terminal CLI and accept the same CLI arguments. Add this repository's `bin` directory to PATH to use these launchers elsewhere. They prefer debug builds when both builds exist. Build the GUI with `./build.sh` and the CLI with `npm run cli:build`. The regular desktop executable also accepts the `cli` subcommand.
 
 Opening a local workspace automatically starts or joins its service. To keep a server in the foreground:
 
 ```sh
-./bin/afteredit --server --workspace /absolute/project
+./bin/afteredit cli --server --workspace /absolute/project
 ```
 
 In the desktop GUI, open a project, choose **Shared workspace** in the navigation or command palette, and select **Start or join current workspace**. Open the same file from the CLI and this panel. The panel shows the socket endpoint for explicitly connecting another client:
 
 ```sh
-afteredit --connect /path/shown/by/gui.sock
-afteredit --connect /path/shown/by/gui.sock buffer list
-afteredit --workspace /absolute/project edit README.md --wait
+afteredit cli --connect /path/shown/by/gui.sock
+afteredit cli --connect /path/shown/by/gui.sock buffer list
+afteredit cli --workspace /absolute/project edit README.md --wait
 ```
 
-`--wait` returns after the open buffer advances to a saved revision. Ctrl-C cancels the wait. The service remains running when a client exits. `afteredit --workspace /absolute/project stop` stops it; dirty buffers require `stop --force`, which retains recovery data.
+`--wait` returns after the open buffer advances to a saved revision. Ctrl-C cancels the wait. The service remains running when a client exits. `afteredit cli --workspace /absolute/project stop` stops it; dirty buffers require `stop --force`, which retains recovery data.
 
 ## Plain editor: the accessible default
 
@@ -68,21 +68,21 @@ This first visual surface has basic rendering: advanced selection, syntax colori
 The service reads the workspace root's `.afteredit.json` and reuses AfterEdit's native task, language-server and debug-adapter engines. Connecting never starts project commands automatically.
 
 ```sh
-afteredit --workspace /project run test                 # review resolved dependency plan
-afteredit --workspace /project run test --approve       # run that current plan
-afteredit --workspace /project runs                    # output, status, exit code, service run ID
-afteredit --workspace /project cancel 2                # cancel service run 2
+afteredit cli --workspace /project run test                 # review resolved dependency plan
+afteredit cli --workspace /project run test --approve       # run that current plan
+afteredit cli --workspace /project runs                    # output, status, exit code, service run ID
+afteredit cli --workspace /project cancel 2                # cancel service run 2
 
-afteredit --workspace /project language typescript --approve
-afteredit --workspace /project diagnostics
-afteredit --workspace /project symbols Parser
+afteredit cli --workspace /project language typescript --approve
+afteredit cli --workspace /project diagnostics
+afteredit cli --workspace /project symbols Parser
 
-afteredit --workspace /project debug start native --approve
-afteredit --workspace /project debug threads
-afteredit --workspace /project debug request stackTrace '{"threadId":1}'
-afteredit --workspace /project debug request scopes '{"frameId":1}'
-afteredit --workspace /project debug request variables '{"variablesReference":1}'
-afteredit --workspace /project debug stop
+afteredit cli --workspace /project debug start native --approve
+afteredit cli --workspace /project debug threads
+afteredit cli --workspace /project debug request stackTrace '{"threadId":1}'
+afteredit cli --workspace /project debug request scopes '{"frameId":1}'
+afteredit cli --workspace /project debug request variables '{"variablesReference":1}'
+afteredit cli --workspace /project debug stop
 ```
 
 Use IDs returned by your actual adapter, rather than assuming the example IDs. `debug.request` supports breakpoints, stepping, evaluation and optional inspection operations such as memory, disassembly and reverse execution when the adapter supports them. `events` exposes bounded task/LSP/DAP activity with sequence cursors. `task.list` retains the last 20 runs. Supported test reporters stream their structured output through the task engine.
@@ -96,11 +96,11 @@ Language operations return protocol data; workspace edits from rename/formatting
 ## API and SSH
 
 ```sh
-afteredit --workspace /project capabilities --json
-afteredit --workspace /project rpc events '{"after":0}' --json
-afteredit --workspace /project buffer open README.md --json
-afteredit --workspace /project buffer set README.md --revision 1 --text 'new text' --json
-afteredit --workspace /project buffer save README.md --revision 2 --json
+afteredit cli --workspace /project capabilities --json
+afteredit cli --workspace /project rpc events '{"after":0}' --json
+afteredit cli --workspace /project buffer open README.md --json
+afteredit cli --workspace /project buffer set README.md --revision 1 --text 'new text' --json
+afteredit cli --workspace /project buffer save README.md --revision 2 --json
 ```
 
 Local IPC uses one newline-delimited JSON request per Unix-socket connection:
@@ -114,10 +114,10 @@ Replies are `{"ok":true,"result":...}` or `{"ok":false,"error":"..."}`. `capabil
 Remote transport is implemented through SSH, requiring an installed `afteredit` command on the remote PATH:
 
 ```sh
-afteredit --connect ssh://my-server/absolute/project --plain
+afteredit cli --connect ssh://my-server/absolute/project --plain
 ```
 
-Shared workspace checks an SSH config alias and an absolute remote directory, then lists and edits files through shared buffers. The check runs system `ssh` with a fixed option list and `afteredit --stdio`. The webview cannot pass an `ssh://` string, a port, an identity file, a proxy command, or a custom ssh binary into that command. A failed check is not remembered. Later requests use only an endpoint this window checked. Unknown hosts fail through `known_hosts`. No password is stored. SAH is named in the panel and is not connected. The CLI `--connect ssh://HOST/DIR` path still works. This transport has not yet been validated against a real remote host.
+Shared workspace checks an SSH config alias and an absolute remote directory, then lists and edits files through shared buffers. The check runs system `ssh` with a fixed option list and `afteredit cli --stdio`. The webview cannot pass an `ssh://` string, a port, an identity file, a proxy command, or a custom ssh binary into that command. A failed check is not remembered. Later requests use only an endpoint this window checked. Unknown hosts fail through `known_hosts`. No password is stored. SAH is named in the panel and is not connected. The CLI `--connect ssh://HOST/DIR` path still works. This transport has not yet been validated against a real remote host.
 
 ## Prototype boundaries and recovery
 

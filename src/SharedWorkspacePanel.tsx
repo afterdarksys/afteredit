@@ -139,7 +139,7 @@ export default function SharedWorkspacePanel({ root, onDirty }: { root: string; 
     <p role="status" aria-live="polite">{status}</p>
     {error && <p role="alert">{error}</p>}
     {caps && <>
-      <p>Workspace: {caps.root}. Protocol {caps.protocol}. CLI: <code>afteredit --connect '{connected.split("'").join("'\\''")}'</code></p>
+      <p>Workspace: {caps.root}. Protocol {caps.protocol}. CLI: <code>afteredit cli --connect '{connected.split("'").join("'\\''")}'</code></p>
       {connected.startsWith('ssh://') && remoteEntries && <>
         <h2>Remote files</h2>
         <p>{remoteStack.length < 2 ? 'Remote project root' : remoteStack[remoteStack.length - 1]}</p>

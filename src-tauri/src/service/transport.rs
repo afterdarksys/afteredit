@@ -173,7 +173,10 @@ pub fn ensure_server(root: &Path, socket: &Path) -> Result<(), String> {
     let log = log_options
         .open(socket.with_extension("log"))
         .map_err(err)?;
-    let mut command = std::process::Command::new(executable);
+    let mut command = std::process::Command::new(&executable);
+    if executable.file_stem().and_then(|name| name.to_str()) != Some("afteredit-cli") {
+        command.arg("cli");
+    }
     command
         .args(["--server", "--workspace"])
         .arg(root)
@@ -319,7 +322,7 @@ pub fn ssh(endpoint: &str, method: &str, params: Value) -> Result<Value, String>
     // Quotes are already refused. The escape stays so a later charset change
     // cannot break out of the remote command.
     let quoted = format!("'{}'", workspace.replace('\'', "'\\''"));
-    let remote = format!("afteredit --stdio --workspace {quoted}");
+    let remote = format!("afteredit cli --stdio --workspace {quoted}");
     let mut command = std::process::Command::new("ssh");
     command
         .arg("-T")

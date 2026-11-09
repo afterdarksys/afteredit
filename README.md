@@ -4,6 +4,19 @@ A native developer workbench using Tauri 2, React, Monaco and a real PTY.
 
 ## Run
 
+The launch commands are:
+
+- `afteredit` — desktop GUI.
+- `afteredit cli` — plain terminal CLI.
+- `afteredit-cli` — the same terminal CLI.
+
+From this checkout, use `./bin/afteredit` or `./bin/afteredit-cli`, or add
+this repository's `bin` directory to your PATH. Build the standalone GUI with
+`./build.sh` and the CLI with `npm run cli:build`. Use `afteredit cli --help`
+for CLI options, including `--tui` for the full-screen terminal interface.
+
+For GUI development:
+
 ```sh
 npm ci
 npm run tauri dev
@@ -646,4 +659,4 @@ workbench; editor actions are disabled while its editor is unavailable.
 
 ### Shared CLI prototype
 
-Build with `npm run cli:build`, then run `./bin/afteredit .` for the plain terminal editor or `./bin/afteredit README.md --tui` for the optional full-screen surface. The desktop **Shared workspace** panel joins the same service and versioned buffers. See [CLI-PROTOTYPE.md](CLI-PROTOTYPE.md) for server mode, GUI connections, accessible editing, tasks/debugging, SSH and current limitations.
+Build with `npm run cli:build`, then run `./bin/afteredit cli .` for the plain terminal editor or `./bin/afteredit cli README.md --tui` for the optional full-screen surface. The desktop **Shared workspace** panel joins the same service and versioned buffers. See [CLI-PROTOTYPE.md](CLI-PROTOTYPE.md) for server mode, GUI connections, accessible editing, tasks/debugging, SSH and current limitations.

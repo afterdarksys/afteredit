@@ -2,7 +2,7 @@
 //!
 //! Threats: the webview may only talk to an endpoint this window started.
 //! A remote join supplies a host alias and an absolute directory. This process
-//! runs `ssh` with a fixed option list and `afteredit --stdio`. It does not
+//! runs `ssh` with a fixed option list and `afteredit cli --stdio`. It does not
 //! accept a password, identity file, port, proxy command, or custom ssh binary.
 //! Unknown hosts fail through normal known_hosts. A failed capabilities check
 //! is not recorded. This does not connect to SAH. Does NOT authenticate other

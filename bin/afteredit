@@ -1,11 +1,19 @@
 #!/bin/sh
-# Repository launcher; build once with npm run cli:build.
+# Repository launcher; build the standalone GUI with ./build.sh.
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ -x "$repo/src-tauri/target/debug/afteredit-cli" ]; then
-  exec "$repo/src-tauri/target/debug/afteredit-cli" "$@"
-elif [ -x "$repo/src-tauri/target/release/afteredit-cli" ]; then
-  exec "$repo/src-tauri/target/release/afteredit-cli" "$@"
+if [ "${1:-}" = cli ]; then
+  shift
+  exec "$repo/bin/afteredit-cli" "$@"
 fi
-printf '%s\n' 'Build the CLI first: npm run cli:build' >&2
+for profile in debug release; do
+  app="$repo/src-tauri/target/$profile/bundle/macos/AfterEdit.app/Contents/MacOS/afteredit"
+  if [ -x "$app" ]; then
+    exec "$app" "$@"
+  fi
+  if [ -x "$repo/src-tauri/target/$profile/afteredit" ]; then
+    exec "$repo/src-tauri/target/$profile/afteredit" "$@"
+  fi
+done
+printf '%s\n' 'Build the GUI first: ./build.sh' >&2
 exit 1
