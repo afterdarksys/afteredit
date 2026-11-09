@@ -29,7 +29,7 @@ npm run tauri build --debug --bundles app
 | --- | --- |
 | Editor | Local buffers, the file tree, search and replace, tasks, debug, Git and the AI sidebar |
 | Shared GUI, plain CLI, TUI | One versioned buffer service. It does not share the main editor's unsaved buffers |
-| CLI over SSH | The shared service transport. The desktop window does not become a remote workspace |
+| CLI over SSH | Shared workspace can open a project this window checked over SSH. Files, the terminal, tasks, and Unix stay local |
 | Experimental extension editor | The active buffer only. No native project filesystem |
 | `$EDITOR` bridge | An explicit grant is required before an out-of-project file opens |
 
@@ -296,12 +296,16 @@ Rego definitions. Monaco supplies JS/TS, JSON, CSS and HTML worker services.
 Other languages can connect installed LSP servers through Language Services.
 Diagnostics, completion, hover, definition, references, rename, code actions,
 signature help and document formatting are supported when the server advertises
-them. Semantic tokens, inlay hints and call hierarchy are not registered.
-Workspace edits that create, rename or delete files are refused; text edits
-land in unsaved buffers. The native Run and debug panel provides DAP debugging
+them. Semantic tokens and inlay hints are registered when the connected server
+offers them. Inlay hints do not rewrite the buffer. Call and type hierarchy is
+an editor list, not a Monaco provider. Creating, renaming, or deleting a file
+asks first, stays inside the project, and refuses overwrites and folder
+deletes. Text edits stay unsaved. The native Run and debug panel provides DAP debugging
 independently of executable extension support. Monaco's in-file find remains
-available. The shared CLI can attach over SSH. The desktop GUI does not open a
-remote workspace, and there is no desktop Node extension host.
+available. The shared CLI can attach over SSH. Shared workspace can check and open a
+remote project when afteredit is already on that host. It uses the SSH config
+and keys, stores no password, and does not open SAH. Files, the terminal,
+tasks, and the Unix page stay local. There is no desktop Node extension host.
 
 The `$EDITOR` interceptor in `src-tauri/afteredit-cli.sh` is still a sketch.
 Do not install it as `$EDITOR`. The workspace CLI documented under Shared CLI
@@ -368,10 +372,13 @@ Personal toolchain bin directories are searched for GUI launches. Servers must u
 UTF-16 positions. The client sends open/change/save/close notifications, handles
 full or incremental synchronization, and exposes advertised diagnostics, completion,
 hover, definitions, references, rename, code actions, signature help and formatting
-through Monaco. Text workspace edits land in unsaved buffers. Create, rename and
-delete file operations are refused, and executable completion commands are not
-applied. Dynamic registration, semantic tokens, inlay hints and call hierarchy
-remain unsupported. Native DAP
+through Monaco. Text workspace edits stay unsaved. Creating, renaming, or deleting
+a file asks first, refuses to overwrite, and refuses to delete a folder. A code
+action's command is sent to the server the user connected, after the user accepts
+the action. Dynamic registration is still unsupported. Semantic tokens and inlay
+hints are registered when the connected server offers them. Inlay hints do not
+rewrite the buffer. Call and type hierarchy is an editor list that jumps to the
+symbol. Native DAP
 debugging is provided separately by Run and debug. Disconnected
 servers can be removed and reconnected in the Language Services panel.
 
@@ -604,6 +611,19 @@ result bundles, simulator and connected-device commands, LLDB configuration,
 signing overrides, archive/export, and Xcode designer handoffs. SwiftUI Canvas
 and Interface Builder run in Xcode. See [Apple development](APPLE-DEVELOPMENT.md)
 for setup, verification commands and the remaining live-validation limits.
+
+## Unix development
+
+The Unix development page is the other side of the same Mac. It lists the
+compilers, Make, CMake, Meson, pkg-config, man pages, and LLDB installed on
+the machine, and shows a C, C++, or kernel-shaped tree as one project. Opening
+the page runs nothing. Build and test commands are reviewed before they run.
+CMake writes a compilation database. Make targets are names read from the
+makefile. The page does not run `make -qp`, `menuconfig`, or `./configure`,
+and it does not set `ARCH` or `CROSS_COMPILE`. Diagnostics open in the editor.
+clangd and LLDB are prepared for review and are not started by the page. This
+is not a remote Linux workspace, a kernel configuration screen, or a
+virtual-machine launcher. Rust and Go stay in Build workflows.
 
 ### Native IDE menus
 

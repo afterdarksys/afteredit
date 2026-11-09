@@ -9,6 +9,7 @@ test('personal defaults inherit through project/directory overrides', () => {
 test('preferences reject invalid numbers, enum values and unknown options', () => {
  for(const v of [{keymap:'vi'}, {fontSize:NaN}, {minimap:{}}, {lineHeight:-1}, {unknown:true}]) assert.throws(()=>validateEditor(v));
  assert.deepEqual(editorOptions({...editorDefaults,minimap:false}).minimap,{enabled:false});
+ assert.equal(editorOptions(editorDefaults)['semanticHighlighting.enabled'], true);
 });
 test('save normalization respects existing CRLF and can be disabled', () => {
  const raw='hello  \r\nworld\t';

@@ -220,6 +220,10 @@
         "title": "Apple Development"
       },
       {
+        "id": "view.unix",
+        "title": "Unix Development"
+      },
+      {
         "id": "view.git",
         "title": "Source Control"
       },

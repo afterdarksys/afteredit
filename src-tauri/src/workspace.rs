@@ -278,6 +278,32 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn language_server_file_ops_stay_inside_one_regular_file() {
+        let (root, state) = fixture();
+        let created = make_text_file(&state, &root.join("src"), "New.java").unwrap();
+        assert!(created.ends_with("New.java"));
+        assert_eq!(fs::read_to_string(&created).unwrap(), "");
+        assert!(make_text_file(&state, &root.join("src"), "New.java").unwrap_err().contains("already has that name"));
+        assert!(make_text_file(&state, &root.join("src"), "../New.java").is_err());
+        assert!(make_text_file(&state, &root.join("src"), "a/b.java").is_err());
+        let folder = make_directory(&state, &root, "keep").unwrap();
+        assert!(remove_text_file(&state, &folder).unwrap_err().contains("not a folder"));
+        assert!(folder.is_dir());
+        assert!(remove_text_file(&state, &root).is_err());
+        remove_text_file(&state, &created).unwrap();
+        assert!(!created.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[cfg(unix)]
+    fn language_server_file_ops_leave_symlinks_alone() {
+        let (root, state) = fixture();
+        std::os::unix::fs::symlink("lib.rs", root.join("src/link.rs")).unwrap();
+        assert!(remove_text_file(&state, &root.join("src/link.rs")).is_err());
+        assert!(root.join("src/link.rs").symlink_metadata().unwrap().file_type().is_symlink());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     #[cfg(unix)]
     fn explorer_does_not_follow_a_symlink() {
         let (root, state) = fixture();
@@ -804,6 +830,56 @@ pub(crate) fn move_path(state: &WorkspaceState, from: &Path, dest_dir: &Path, na
     fs::rename(&from, &dest).map_err(error)?;
     Ok(dest)
 }
+/// Threats: a confirmed language-server create must not leave the open
+/// project, follow a symlink, or overwrite a name that already exists.
+/// This writes an empty regular file. File contents stay an unsaved buffer
+/// until the user saves. It does not create folders.
+pub(crate) fn make_text_file(state: &WorkspaceState, parent: &Path, name: &str) -> Result<PathBuf, String> {
+    component_name(name)?;
+    let parent = allowed(state, parent)?;
+    if !parent.is_dir() {
+        return Err("Choose a folder.".into());
+    }
+    let root = project_root(state, &parent)?;
+    let path = parent.join(name);
+    if !path.starts_with(&root) {
+        return Err("The file must stay inside the project.".into());
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&path) {
+        if metadata.file_type().is_symlink() {
+            return Err("Symlinks are left unchanged.".into());
+        }
+        return Err("Something already has that name.".into());
+    }
+    fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(error)?;
+    let created = path.canonicalize().map_err(error)?;
+    if !created.starts_with(&root) {
+        let _ = fs::remove_file(&created);
+        return Err("The file must stay inside the project.".into());
+    }
+    Ok(created)
+}
+/// Threats: a confirmed language-server delete must not remove a directory,
+/// the project root, or a symlink. Explorer delete remains `remove_path`.
+pub(crate) fn remove_text_file(state: &WorkspaceState, path: &Path) -> Result<(), String> {
+    let path = anchored(state, path)?;
+    let root = project_root(state, &path)?;
+    if path == root {
+        return Err("The project root stays.".into());
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(error)?;
+    if metadata.file_type().is_symlink() {
+        return Err("Symlinks are left unchanged.".into());
+    }
+    if metadata.is_dir() {
+        return Err("Language servers can delete a file, not a folder.".into());
+    }
+    if !metadata.is_file() {
+        return Err("Only a regular file can be deleted this way.".into());
+    }
+    fs::remove_file(&path).map_err(error)?;
+    Ok(())
+}
 pub(crate) fn remove_path(state: &WorkspaceState, path: &Path) -> Result<(), String> {
     let path = anchored(state, path)?;
     let root = project_root(state, &path)?;
@@ -820,6 +896,14 @@ pub(crate) fn remove_path(state: &WorkspaceState, path: &Path) -> Result<(), Str
 #[tauri::command]
 pub fn create_directory(state: tauri::State<'_, WorkspaceState>, parent: String, name: String) -> Result<String, String> {
     make_directory(&state, Path::new(&parent), &name).map(|path| path.to_string_lossy().into_owned())
+}
+#[tauri::command]
+pub fn create_text_file(state: tauri::State<'_, WorkspaceState>, parent: String, name: String) -> Result<String, String> {
+    make_text_file(&state, Path::new(&parent), &name).map(|path| path.to_string_lossy().into_owned())
+}
+#[tauri::command]
+pub fn delete_text_file(state: tauri::State<'_, WorkspaceState>, path: String) -> Result<(), String> {
+    remove_text_file(&state, Path::new(&path))
 }
 #[tauri::command]
 pub fn rename_path(state: tauri::State<'_, WorkspaceState>, from: String, dest_dir: String, name: String) -> Result<String, String> {

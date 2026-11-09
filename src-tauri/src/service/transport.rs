@@ -232,61 +232,169 @@ pub fn stdio(socket: &Path) -> Result<(), String> {
         )?;
     }
 }
-pub fn ssh(endpoint: &str, method: &str, params: Value) -> Result<Value, String> {
+const SSH_HOST_ERROR: &str =
+    "Invalid SSH host; use an SSH config alias for ports and identity files";
+
+/// Host alias plus absolute directory, as `ssh://alias/absolute/path`.
+/// The host is an SSH config alias: no port, identity file, or proxy.
+/// A trailing slash on the directory is removed. `/` alone is refused.
+pub fn ssh_endpoint(host: &str, workspace: &str) -> Result<String, String> {
+    let host = host.trim();
+    let workspace = normalize_ssh_workspace(workspace)?;
+    validate_ssh_host(host)?;
+    Ok(format!("ssh://{host}{workspace}"))
+}
+
+/// Split an endpoint this crate built. A string that does not round-trip
+/// through [`ssh_endpoint`] is refused, so option smuggling cannot survive.
+pub fn parse_ssh_endpoint(endpoint: &str) -> Result<(String, String), String> {
     let target = endpoint
         .strip_prefix("ssh://")
         .ok_or("Expected ssh://host/absolute/workspace")?;
     let (host, path) = target
         .split_once('/')
         .ok_or("SSH endpoint needs an absolute workspace path")?;
+    let workspace = format!("/{path}");
+    let rebuilt = ssh_endpoint(host, &workspace)?;
+    if rebuilt != endpoint {
+        return Err("Invalid SSH endpoint".into());
+    }
+    let workspace = rebuilt
+        .strip_prefix(&format!("ssh://{host}"))
+        .ok_or("Invalid SSH endpoint")?
+        .to_string();
+    Ok((host.to_string(), workspace))
+}
+
+fn validate_ssh_host(host: &str) -> Result<(), String> {
     if host.is_empty()
+        || host.len() > 253
         || host.starts_with('-')
         || !host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "@.-_".contains(c))
     {
-        return Err(
-            "Invalid SSH host; use an SSH config alias for ports and identity files".into(),
-        );
+        return Err(SSH_HOST_ERROR.into());
     }
-    let workspace = format!("/{path}");
+    Ok(())
+}
+
+fn normalize_ssh_workspace(workspace: &str) -> Result<String, String> {
+    // Controls are rejected before trim. A leading newline must not become a path.
+    if workspace.chars().any(|c| {
+        c.is_control() || c == '\u{2028}' || c == '\u{2029}' || c == '\'' || c == '"' || c == '\\'
+    }) {
+        return Err("Remote project contains a character SSH will not pass through.".into());
+    }
+    let mut workspace = workspace.trim().to_string();
+    if workspace.len() > 1 && workspace.ends_with('/') {
+        workspace.pop();
+    }
+    if workspace.len() < 2 || workspace.len() > 4096 || !workspace.starts_with('/') {
+        return Err("Remote project must be an absolute path.".into());
+    }
+    if workspace == "/" {
+        return Err("Remote project must be an absolute path.".into());
+    }
+    for (index, part) in workspace.split('/').enumerate() {
+        if index == 0 {
+            if !part.is_empty() {
+                return Err("Remote project must be an absolute path.".into());
+            }
+            continue;
+        }
+        if part.is_empty() || part == "." || part == ".." {
+            return Err("Remote project must stay on one absolute path.".into());
+        }
+    }
+    Ok(workspace)
+}
+
+/// One JSON request over `ssh` with a fixed option list.
+/// BatchMode refuses passwords and unknown-host prompts. stderr is drained
+/// so a full pipe cannot stall the reply, capped, and attached only to an
+/// error. It is not written to a log.
+pub fn ssh(endpoint: &str, method: &str, params: Value) -> Result<Value, String> {
+    let (host, workspace) = parse_ssh_endpoint(endpoint)?;
+    // Quotes are already refused. The escape stays so a later charset change
+    // cannot break out of the remote command.
     let quoted = format!("'{}'", workspace.replace('\'', "'\\''"));
-    let mut child = std::process::Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=10",
-            "-o",
-            "ServerAliveInterval=15",
-            "-o",
-            "ServerAliveCountMax=2",
-            "--",
-            host,
-            &format!("afteredit --stdio --workspace {quoted}"),
-        ])
+    let remote = format!("afteredit --stdio --workspace {quoted}");
+    let mut command = std::process::Command::new("ssh");
+    command
+        .arg("-T")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-o")
+        .arg("ServerAliveInterval=15")
+        .arg("-o")
+        .arg("ServerAliveCountMax=2")
+        .arg("--")
+        .arg(&host)
+        .arg(&remote)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .map_err(err)?;
-    let mut input = child.stdin.take().ok_or("SSH stdin missing")?;
-    write_value(&mut input, &json!({"method":method,"params":params}))?;
-    drop(input);
-    let result = read_value(&mut BufReader::new(
-        child.stdout.take().ok_or("SSH stdout missing")?,
-    ));
-    let _ = child.wait();
-    let value = result?;
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn().map_err(err)?;
+    let stderr = child.stderr.take();
+    let stderr_thread = std::thread::spawn(move || drain_capped(stderr, 4096));
+    let exchanged = (|| -> Result<Value, String> {
+        let mut input = child.stdin.take().ok_or("SSH stdin missing")?;
+        write_value(&mut input, &json!({"method":method,"params":params}))?;
+        drop(input);
+        read_value(&mut BufReader::new(
+            child.stdout.take().ok_or("SSH stdout missing")?,
+        ))
+    })();
+    let status = child.wait().map_err(err)?;
+    let stderr_text = match stderr_thread.join() {
+        Ok(text) => text,
+        Err(_) => String::new(),
+    };
+    let value = exchanged.map_err(|message| ssh_failure(&message, &stderr_text, &status))?;
     if value["ok"] == true {
         Ok(value["result"].clone())
     } else {
-        Err(value["error"]
-            .as_str()
-            .unwrap_or("Remote service failed")
-            .into())
+        let message = value["error"].as_str().unwrap_or("Remote service failed");
+        Err(ssh_failure(message, &stderr_text, &status))
     }
+}
+
+fn ssh_failure(message: &str, stderr: &str, status: &std::process::ExitStatus) -> String {
+    let stderr = stderr.trim();
+    let mut text = message.to_string();
+    if !status.success() {
+        text.push_str(&format!(" (ssh exited {status})"));
+    }
+    if !stderr.is_empty() {
+        text.push('\n');
+        text.push_str(stderr);
+    }
+    text
+}
+
+fn drain_capped(pipe: Option<std::process::ChildStderr>, cap: usize) -> String {
+    let Some(mut pipe) = pipe else {
+        return String::new();
+    };
+    let mut kept = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if kept.len() < cap {
+                    let room = cap - kept.len();
+                    kept.extend_from_slice(&buf[..n.min(room)]);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&kept).trim().to_string()
 }
 
 #[cfg(test)]
@@ -307,5 +415,53 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         assert_ne!(default_socket(&other).unwrap(), a);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ssh_endpoint_accepts_an_alias_and_absolute_directory() {
+        assert_eq!(
+            ssh_endpoint("dev", "/srv/app").unwrap(),
+            "ssh://dev/srv/app"
+        );
+        assert_eq!(
+            ssh_endpoint("user@host", "/srv/app/").unwrap(),
+            "ssh://user@host/srv/app"
+        );
+        let (host, workspace) = parse_ssh_endpoint("ssh://dev/srv/app").unwrap();
+        assert_eq!(host, "dev");
+        assert_eq!(workspace, "/srv/app");
+        assert_eq!(
+            ssh_endpoint(&"a".repeat(253), &format!("/{}", "b".repeat(4094))).unwrap(),
+            format!("ssh://{}/{}", "a".repeat(253), "b".repeat(4094))
+        );
+    }
+
+    #[test]
+    fn ssh_endpoint_rejects_options_and_paths_that_leave_the_directory() {
+        for host in ["", "-oProxyCommand=x", "host name", "host/path", "host;rm", "../x"] {
+            assert!(ssh_endpoint(host, "/srv/app").is_err(), "{host}");
+        }
+        assert!(ssh_endpoint(&"a".repeat(254), "/srv/app").is_err());
+        for path in [
+            "",
+            "relative",
+            "/",
+            "/tmp/../etc",
+            "/tmp/./etc",
+            "/tmp//etc",
+            "\n/tmp",
+            "/tmp/it's",
+            "/tmp/a\nb",
+            "/tmp/a\\b",
+            "/tmp/a\"b",
+        ] {
+            assert!(ssh_endpoint("dev", path).is_err(), "{path:?}");
+        }
+        assert!(ssh_endpoint("dev", &format!("/{}", "c".repeat(4096))).is_err());
+        assert!(parse_ssh_endpoint("ssh://-oProxyCommand=x/tmp").is_err());
+        assert!(parse_ssh_endpoint("ssh://dev/tmp/../etc").is_err());
+        assert!(parse_ssh_endpoint("ssh://dev").is_err());
+        assert!(parse_ssh_endpoint("not-ssh://dev/srv/app").is_err());
+        assert!(parse_ssh_endpoint("ssh://dev/srv/app\n").is_err());
     }
 }

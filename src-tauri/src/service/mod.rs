@@ -14,7 +14,7 @@ use std::{
     },
     time::Duration,
 };
-pub use transport::{default_socket, ensure_server, rpc, serve};
+pub use transport::{default_socket, ensure_server, parse_ssh_endpoint, rpc, serve, ssh_endpoint};
 const MAX_TEXT: usize = 1024 * 1024;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()

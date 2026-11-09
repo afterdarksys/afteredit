@@ -37,5 +37,5 @@ export function savedText(text: string, prefs: EditorPreferences): string {
 }
 export function editorOptions(prefs: EditorPreferences) {
   const { shellBlockCompletion: _shell, keymap: _keymap, theme: _theme, trimTrailingWhitespace: _trim, insertFinalNewline: _newline, minimap, bracketPairColorization, stickyScroll, ...rest } = prefs;
-  return { ...rest, minimap: { enabled: minimap }, bracketPairColorization: { enabled: bracketPairColorization }, stickyScroll: { enabled: stickyScroll }, automaticLayout: true };
+  return { ...rest, minimap: { enabled: minimap }, bracketPairColorization: { enabled: bracketPairColorization }, stickyScroll: { enabled: stickyScroll }, automaticLayout: true, 'semanticHighlighting.enabled': true };
 }

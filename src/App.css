@@ -225,6 +225,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .workbench-page label { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
 .workbench-page input, .workbench-page select, .workbench-page textarea, .sidebar select { background: #24272d; color: #eee; border: 1px solid #4c525b; padding: 8px; border-radius: 4px; box-sizing: border-box; }
 .workbench-page button { margin: 4px; }
+.workbench-page fieldset { border: 1px solid #4c525b; border-radius: 4px; margin: 16px 0; padding: 8px 16px 16px; max-width: 850px; }
+.workbench-page legend { padding: 0 6px; color: #eee; }
+.remote-files { list-style: none; padding: 0; margin: 8px 0; max-width: 850px; }
+.remote-files button { display: block; width: 100%; text-align: left; }
 .workbench-page pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .workbench-page .check { flex-direction: row; align-items: center; }
 .field-row { display: flex; gap: 12px; flex-wrap: wrap; }

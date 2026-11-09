@@ -1,5 +1,6 @@
 import { menuCommands, editorCommands, type EditorMenuRequest } from './menuCommands';
 import ApplePanel from './ApplePanel';
+import UnixPanel from './UnixPanel';
 import {normalizeExtensionSettings,restoredExtensionSettings} from './extensionSettings';
 import GitPanel from './GitPanel';
 import { reconcileDisk } from './fileChanges';
@@ -22,7 +23,7 @@ import ProductionConfirm from './ProductionConfirm';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Cloud, Bug, Files, Search, Code, Wrench, Settings, Zap, Play, Package } from 'lucide-react';
+import { Cloud, Bug, Files, Search, Code, Wrench, Settings, Zap, Play, Package, Terminal } from 'lucide-react';
 import TerminalPanel from './TerminalPanel';
 import ToolsPanel from './ToolsPanel';
 import ErrorBoundary from './ErrorBoundary';
@@ -32,13 +33,13 @@ import { composeGuidance, discoverSkills, type Skill } from './guidance';
 import type { SecretFinding } from './policy';
 import { formatInspectDebug, formatInspectRun, prepareFailedTestLaunch } from './investigation';
 import { runMonitor } from './runMonitor';
-import { applyTextEdits, type FileEdits } from './workspaceEdit';
+import { applyTextEdits, type FileEdits, type FileOperation } from './workspaceEdit';
 import LanguagePanel from './LanguagePanel';
 import { detectBuildSystems, type ConnectedServer } from './languageServices';
 import SearchPanel from './SearchPanel';
 import FileTree from './FileTree';
 import { applyDrafts } from './drafts';
-import { retargetPath } from './fileOps';
+import { parentName, retargetPath } from './fileOps';
 import ExtensionsPanel from './ExtensionsPanel';
 import { restoreExtensions, type Extension } from './extensions';
 import PreferencesPanel from './PreferencesPanel';
@@ -56,7 +57,7 @@ const CompatibilityEditor = lazy(() => import('./CompatibilityEditor'));
 const CodeEditor = lazy(() => import('./CodeEditor'));
 type Entry = { name: string; path: string; directory: boolean };
 type Buffer = { value: string; saved: string; disk: boolean };
-type View = 'shared' | 'apple' | 'git' | 'history' | 'http' | 'infrastructure' | 'debug' | 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
+type View = 'shared' | 'apple' | 'unix' | 'git' | 'history' | 'http' | 'infrastructure' | 'debug' | 'editor' | 'tools' | 'settings' | 'tasks' | 'ai' | 'extensions' | 'search' | 'languages';
 const parent = (path: string) => path.replace(/[\\/][^\\/]+$/, '');
 const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
 function App() {
@@ -65,8 +66,9 @@ function App() {
   const accessibility = restoreAccessibility(accessibilityJSON);
   const playCue = useSoundCues(accessibility);
   const effectiveAccessibility = {...accessibility,reducedMotion:accessibility.reducedMotion || systemReducedMotion};
-  const [languageIntent,setLanguageIntent]=useState({root:'',language:'rust'});
+  const [languageIntent,setLanguageIntent]=useState<{root:string;language:string;draft?:string}>({root:'',language:'rust'});
   const [appleProblems,setAppleProblems]=useState<InfrastructureDiagnostic[]>([]);
+  const [unixProblems,setUnixProblems]=useState<InfrastructureDiagnostic[]>([]);
   const [infrastructureProblems,setInfrastructureProblems]=useState<InfrastructureDiagnostic[]>([]);
   const [extensionSettingsRaw,setExtensionSettings]=usePersistedState('extension.settings.v1','{}');
   const extensionSettings=restoredExtensionSettings(extensionSettingsRaw);
@@ -472,25 +474,75 @@ function App() {
     setAgentChanges(changes=>[...changes,{path,before,after:value}]);
     return `Edited unsaved buffer ${relative}. Save it before running tasks.`;
   }
-  /** Edits a language server wants to make in files other than the one on
-   *  screen (a rename, a quick fix that touches a header). They land as
-   *  unsaved buffers to review, never straight to disk, and every file is
-   *  computed before any of them is committed so a bad edit set changes
-   *  nothing. */
+  /** Text edits from a language server, including the file on screen when a
+   *  later rename must keep them. They land as unsaved buffers, never straight
+   *  to disk. The open editor applies the same edit itself, so that file is
+   *  not announced again. */
   async function applyWorkspaceEdit(files:FileEdits[]){
     const updates:Record<string,Buffer>={};
     for(const file of files){
-      const existing=buffersRef.current[file.path];
+      const existing=updates[file.path]??buffersRef.current[file.path];
       // Not open yet: take the file from disk, so a rename reaches code the
-      // user has never had on screen.
+      // user has never had on screen. A file just created by this edit is
+      // already an empty buffer and is not read back.
       const disk=existing?null:await invoke<string>('read_file',{path:file.path});
       const base=existing??{value:disk!,saved:disk!,disk:true};
       updates[file.path]={...base,value:applyTextEdits(base.value,file.edits)};
     }
     buffersRef.current={...buffersRef.current,...updates};
     setBuffers(current=>({...current,...updates}));
-    const names=Object.keys(updates).map(path=>basename(path));
-    setStatus(`Changed ${names.length} other file${names.length===1?'':'s'}: ${names.join(', ')}. Review and save them.`);
+    const announced=Object.keys(updates).filter(path=>path!==activeRef.current&&path!==sideRef.current);
+    if(announced.length){
+      const names=announced.map(path=>basename(path));
+      setStatus(`Changed ${names.length} other file${names.length===1?'':'s'}: ${names.join(', ')}. Review and save them.`);
+    }
+  }
+  /** One confirmed batch of file creates, renames, and deletes. Earlier disk
+   *  steps stay if a later step fails. This does not ask again. */
+  async function applyFileOperations(operations:FileOperation[]){
+    for(const operation of operations){
+      if(operation.kind==='create'){
+        const parts=parentName(operation.path);
+        if(!parts)throw new Error('The language server sent a path that leaves its folder. Nothing was changed.');
+        try{
+          await invoke('create_text_file',{parent:parts.parent,name:parts.name});
+        }catch(error){
+          if(operation.ignoreIfExists&&String(error).includes('already has that name'))continue;
+          throw error;
+        }
+        if(!buffersRef.current[operation.path]){
+          const empty:Buffer={value:'',saved:'',disk:true};
+          buffersRef.current={...buffersRef.current,[operation.path]:empty};
+          setBuffers(current=>current[operation.path]?current:{...current,[operation.path]:empty});
+        }
+        setTreeTick(tick=>tick+1);
+        setStatus(`Created ${basename(operation.path)}.`);
+      }else if(operation.kind==='rename'){
+        const parts=parentName(operation.to);
+        if(!parts)throw new Error('The language server sent a path that leaves its folder. Nothing was changed.');
+        await invoke('rename_path',{from:operation.from,destDir:parts.parent,name:parts.name});
+        const retarget=(item:string)=>retargetPath(item,operation.from,operation.to);
+        const next=Object.fromEntries(Object.entries(buffersRef.current).map(([item,buffer])=>[retarget(item),buffer]));
+        buffersRef.current=next;
+        setBuffers(()=>next);
+        activeRef.current=retarget(activeRef.current);
+        sideRef.current=retarget(sideRef.current);
+        setActive(current=>retarget(current));
+        setSide(current=>retarget(current));
+        setTreeTick(tick=>tick+1);
+        setStatus(`Renamed ${basename(operation.from)}.`);
+      }else{
+        await invoke('delete_text_file',{path:operation.path});
+        const under=(item:string)=>item===operation.path||item.startsWith(operation.path+'/')||item.startsWith(operation.path+'\\');
+        const next=Object.fromEntries(Object.entries(buffersRef.current).filter(([item])=>!under(item)));
+        buffersRef.current=next;
+        setBuffers(()=>next);
+        if(under(activeRef.current)){activeRef.current='';setActive('');}
+        if(under(sideRef.current)){sideRef.current='';setSide('');}
+        setTreeTick(tick=>tick+1);
+        setStatus(`Deleted ${basename(operation.path)}.`);
+      }
+    }
   }
   async function saveProjectEdits(){
     for(const [path,buffer] of Object.entries(buffersRef.current)){
@@ -646,7 +698,7 @@ function App() {
     {!sessionReady && <div role="status" className="session-loading">Restoring previous session…</div>}
     <div className="main-content" inert={!sessionReady}>
       <nav id="workbench-navigation" tabIndex={-1} data-focus-region className="activity-bar" aria-label="Workbench">{([
-        ['editor', Files, 'Files'], ['shared', Code, 'Shared workspace'], ['apple', Code, 'Apple development'], ['git', Code, 'Source control'], ['history', History, 'Local history'], ['http', Zap, 'HTTP requests'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
+        ['editor', Files, 'Files'], ['shared', Code, 'Shared workspace'], ['apple', Code, 'Apple development'], ['unix', Terminal, 'Unix development'], ['git', Code, 'Source control'], ['history', History, 'Local history'], ['http', Zap, 'HTTP requests'], ['debug', Bug, 'Run and debug'], ['infrastructure', Cloud, 'Infrastructure'], ['search', Search, 'Project search'], ['languages',Code,'Language services'], ['tasks', Play, 'Build workflows'], ['tools', Wrench, 'Developer tools'], ['ai', Zap, 'AI assistant'], ['extensions', Package, 'Extensions'], ['settings', Settings, 'Settings'],
       ] as const).map(([id, Icon, title]) => <button key={id} title={title} aria-label={title} aria-pressed={id==='ai'?aiSidebar==='1':view === id} className={(id==='ai'?aiSidebar==='1':view === id) ? 'selected' : ''} onClick={() => {if(id==='ai'){setAiSidebar(aiSidebar==='1'?'0':'1');setView('editor');return;}if(id==='debug')setCompatibility(false);setView(id);}}><Icon size={21} /></button>)}</nav>
       <aside style={{display:sidebarVisible?undefined:'none'}} id="explorer" aria-label="File explorer" tabIndex={-1} data-focus-region className="sidebar"><div className="sidebar-header">EXPLORER</div><div className="explorer-actions"><button disabled={!isTauri()} onClick={() => void choose(false)}>Open file</button><button disabled={!isTauri()} onClick={() => void choose(true)}>Add folder</button></div>
         {roots.length > 0 && <select aria-label="Project" value={root} onChange={e => { const path = e.target.value; setRoot(path); setActive(''); void browse(path).catch(report); }}>{roots.map(r => <option key={r}>{r}</option>)}</select>}
@@ -675,19 +727,20 @@ function App() {
           <div className="breadcrumbs">{view === 'editor' ? active || 'Local scratch buffer' : view}</div>
           <div className="editor-container">
             <div className={split && sideBuffer && view==='editor' ? 'editor-split' : undefined} style={{display:(view==='editor'||view==='debug')?'flex':'none',flex:1,minWidth:0,minHeight:0,flexDirection:split && sideBuffer && view==='editor' ? 'row' : 'column'}}>
-            <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} reveal={reveal} onRevealConsumed={()=>setReveal(null)} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>
-            {split && sideBuffer && view==='editor' && <ErrorBoundary key={side}><Suspense fallback={<p>Loading second editor…</p>}><CodeEditor onReady={()=>{}} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={side} value={sideBuffer.value} onChange={next => setBuffers(current => current[side] ? {...current, [side]: {...current[side], value: next}} : current)} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} reveal={null} onRevealConsumed={()=>{}} extensions={extensions} onSave={() => void save(side)} /></Suspense></ErrorBoundary>}
+            <ErrorBoundary key={active || 'scratch'} fallback={<textarea aria-label="Recovery text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} />}><Suspense fallback={<div className="recovery"><p>Loading syntax editor… You can edit below while it loads.</p><textarea aria-label="Loading text editor" className="fallback-editor" value={value} onChange={e => update(e.target.value)} /></div>}>{compatibility ? <CompatibilityEditor menuRequest={editorMenu} onReady={setEditorReady} root={activeRoot} settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} key={extensionRevision+":"+activeRoot} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} extensions={extensions} onSave={() => void save()} /> : <CodeEditor menuRequest={editorMenu} onReady={setEditorReady} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...unixProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={active || 'inmemory://scratch.txt'} value={value} onChange={update} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} onFileOperations={applyFileOperations} reveal={reveal} onRevealConsumed={()=>setReveal(null)} extensions={extensions} onSave={() => void save()} />}</Suspense></ErrorBoundary>
+            {split && sideBuffer && view==='editor' && <ErrorBoundary key={side}><Suspense fallback={<p>Loading second editor…</p>}><CodeEditor onReady={()=>{}} infrastructureDiagnostics={[...infrastructureProblems,...appleProblems,...unixProblems,...policyProblems]} breakpoints={debug.points} onToggleBreakpoint={debug.toggle} debugLocation={debug.phase==='paused'&&debug.frame?.source?.path?{path:debug.frame.source.path,line:debug.frame.line}:undefined} path={side} value={sideBuffer.value} onChange={next => setBuffers(current => current[side] ? {...current, [side]: {...current[side], value: next}} : current)} options={config.editor} servers={servers} onNavigate={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onError={report} onWorkspaceEdit={applyWorkspaceEdit} onFileOperations={applyFileOperations} reveal={null} onRevealConsumed={()=>{}} extensions={extensions} onSave={() => void save(side)} /></Suspense></ErrorBoundary>}
             </div>
             {(view==='debug'||((view==='editor')&&debug.phase!=='idle'))&&<DebugPanel debug={debug} active={active} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} configured={config.debug} prepared={preparedDebug}/>}
             {view==='http' && <HttpPanel fileName={active||'scratch'} buffer={value} onOpenLine={line=>{setView('editor');setReveal({path:active||'inmemory://scratch.txt',line});}}/>}
             {view==='history' && <HistoryPanel path={activeBuffer?.disk?active:''} current={value} onRestore={text=>update(text)}/>}
             {<div style={{display:view==='infrastructure'?'flex':'none',flex:1,minWidth:0}}><InfrastructurePanel root={activeRoot} file={activeBuffer?.disk?active:''} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} detected={detectInfrastructure(entries.map(e=>e.name))} onDiagnostics={setInfrastructureProblems} onPolicyDiagnostics={setPolicyProblems} onOpen={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} onConfigure={preset=>{setPreset(preset);setView('settings');}} onDebug={()=>{setCompatibility(false);setView('debug');}}/></div>}
             <div style={{display:view==='apple'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><ApplePanel key={activeRoot} root={activeRoot} active={active} onLanguage={project=>{setLanguageIntent({root:project.endsWith('Package.swift')?activeRoot+(project.includes('/')?'/'+project.slice(0,project.lastIndexOf('/')):'' ):activeRoot,language:'swift'});setView('languages');}} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} onProblems={setAppleProblems} onDebug={config=>{localStorage.setItem('debug.config:'+activeRoot,JSON.stringify(config));setRoot(activeRoot);setCompatibility(false);setView('debug');}} onOpen={(path,line)=>{void openFile(path).then(()=>{setReveal({path,line});setView('editor');}).catch(report);}}/></div>
+            <div style={{display:view==='unix'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><UnixPanel key={activeRoot} root={activeRoot} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(activeRoot+'/')&&b.value!==b.saved)} onProblems={setUnixProblems} onDebug={config=>{localStorage.setItem('debug.config:'+activeRoot,JSON.stringify(config));setRoot(activeRoot);setCompatibility(false);setView('debug');}} onOpen={(path,line)=>{void openFile(path).then(()=>{setReveal({path,line});setView('editor');}).catch(report);}} onLanguage={intent=>{setLanguageIntent(intent);setView('languages');}}/></div>
             {view === 'git' && <GitPanel key={root} root={root} dirty={Object.entries(buffers).some(([path,b])=>path.startsWith(root+'/')&&b.value!==b.saved)} onOpen={path=>void openFile(path).catch(report)}/>}
             <div style={{display:view==='shared'?'flex':'none',flex:1,minWidth:0,minHeight:0}}><SharedWorkspacePanel root={activeRoot} onDirty={setSharedDirty}/></div>
             {view === 'tools' && <ToolsPanel fileName={active || 'scratch.txt'} buffer={value} onApplyToBuffer={update} />}
 
-            {view === 'languages' && <LanguagePanel initialLanguage={languageIntent.language} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
+            {view === 'languages' && <LanguagePanel key={`${languageIntent.language}:${languageIntent.root}:${languageIntent.draft??''}`} initialLanguage={languageIntent.language} initialDraft={languageIntent.draft} root={languageIntent.root===activeRoot||languageIntent.root.startsWith(activeRoot+'/')?languageIntent.root:activeRoot} configured={config.languageServers} connected={servers} onChange={setServers}/>}
             {view === 'search' && <SearchPanel root={activeRoot} servers={servers} dirty={Object.entries(buffers).filter(([,buffer])=>buffer.value!==buffer.saved).map(([path])=>path)} onReplaced={paths=>{for (const path of paths) void invoke<string>('read_file',{path}).then(text=>setBuffers(current=>current[path]?{...current,[path]:{value:text,saved:text,disk:true}}:current)).catch(report);}} onOpen={(path,line)=>{void openFile(path).then(()=>setReveal({path,line})).catch(report);}} /> }
             {view === 'extensions' && <ExtensionsPanel settingsJSON={extensionSettings} onSettingsChange={persistExtensionSettings} compatibility={compatibility} onCompatibility={enabled=>{setCompatibility(enabled);setView('editor');}} extensions={extensions} onChange={changeExtensions} onTheme={id=>{setPersonalJSON(JSON.stringify({...personal,theme:id}));setView('editor');}} />}
             {view === 'settings' && <section className="workbench-page"><h1>Workspace settings</h1><AccessibilityPanel onTestSound={()=>playCue('success')} value={accessibility} onChange={v=>setAccessibilityJSON(JSON.stringify(v))}/><PreferencesPanel value={personal} onChange={v => setPersonalJSON(JSON.stringify(v))} /><label>Appearance<select value={theme} onChange={e => setTheme(e.target.value)}><option value="mac">macOS</option><option value="win">Windows / Linux</option></select></label><label>Layout<select value={layout} onChange={e => setLayout(e.target.value)}><option value="stacked">Terminal below editor</option><option value="side-by-side">Terminal beside editor</option></select></label>

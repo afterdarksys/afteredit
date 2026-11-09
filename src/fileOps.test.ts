@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { entryName, retargetPath } from './fileOps.ts';
+import { entryName, parentName, retargetPath } from './fileOps.ts';
 import { applyDrafts } from './drafts.ts';
 
 test('explorer names are a single path component', () => {
@@ -10,6 +10,17 @@ test('explorer names are a single path component', () => {
   assert.equal(entryName('..'), null);
   assert.equal(entryName('a/b'), null);
   assert.equal(entryName(''), null);
+});
+
+test('a language-server path splits into a parent and one exact name', () => {
+  assert.deepEqual(parentName('/proj/src/A.java'), { parent: '/proj/src', name: 'A.java' });
+  assert.deepEqual(parentName('/file'), { parent: '/', name: 'file' });
+  assert.deepEqual(parentName('C:/src/App.java'), { parent: 'C:/src', name: 'App.java' });
+  assert.equal(parentName('A.java'), null);
+  assert.equal(parentName('/proj/..'), null);
+  assert.equal(parentName('/proj/.'), null);
+  assert.deepEqual(parentName('/proj/a/b'), { parent: '/proj/a', name: 'b' });
+  assert.equal(parentName('/proj/a\\b'), null);
 });
 
 test('renaming a folder retargets the open buffers inside it', () => {

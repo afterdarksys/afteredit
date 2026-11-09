@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Unix development
+
+- Unix development lists installed compilers and build tools, discovers CMake,
+  Make, Meson, Autotools, and kernel-shaped trees, and prepares reviewed build
+  and test commands.
+- CMake configuration writes a compilation database. The C / C++ / CMake
+  workflow preset does the same.
+- Make targets are read from the makefile. The page does not run `make -qp`,
+  `menuconfig`, or `./configure`.
+- Diagnostics from those commands open in the editor. clangd and LLDB are
+  prepared for review and are not started by the page.
+- Man pages and pkg-config lookups use fixed arguments.
+- This is not a remote Linux workspace, a kernel configuration UI, or a
+  virtual machine launcher.
+
+### Language services
+
+- The language-server allowlist matches the methods the editor already calls,
+  including references, rename, code actions, and workspace symbols.
+- Semantic tokens and inlay hints are shown when the connected server offers
+  them. Inlay hints do not rewrite the buffer.
+- Call and type hierarchy is an editor list that jumps to the symbol.
+- Workspace create, rename, and delete ask first, refuse overwrite and folder
+  delete, and leave text edits unsaved.
+
+### Remote SSH workspace
+
+- Shared workspace can check an SSH config alias and an absolute remote
+  directory, then list files and edit them in the shared buffer.
+- The check uses the system `ssh`, existing keys, and `afteredit` on the remote
+  PATH. It stores no password and does not accept a port, identity file, proxy
+  command, or custom ssh binary.
+- A failed check is not remembered. Later requests use only an endpoint this
+  window checked.
+- Files, the terminal, tasks, and the Unix page stay local.
+- SAH is shown in the transport list and is not connected.
+- This transport has not been validated against a live remote host.
+
 ### Save safety and release validation
 
 - Format-on-save refuses stale formatter results and preserves edits made during

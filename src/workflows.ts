@@ -93,7 +93,7 @@ export const presets: Record<string, Record<string, Task>> = {
   'Node structured tests': {test:{command:'node',args:['--test'],testReporter:'node'}},
   'Go structured tests': {test:{command:'go',args:['test','-json','./...'],testReporter:'go'}},
   Go: { build: { command: 'go', args: ['build', './...'] }, test: { command: 'go', args: ['test', './...'] } },
-  'C / C++ / CMake': { configure: { command: 'cmake', args: ['-S', '.', '-B', 'build'] }, build: { command: 'cmake', args: ['--build', 'build'], dependsOn: ['configure'] }, test: { command: 'ctest', args: ['--test-dir', 'build'], dependsOn: ['build'] } },
+  'C / C++ / CMake': { configure: { command: 'cmake', args: ['-S', '.', '-B', 'build', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'] }, build: { command: 'cmake', args: ['--build', 'build'], dependsOn: ['configure'] }, test: { command: 'ctest', args: ['--test-dir', 'build'], dependsOn: ['build'] } },
   Make: { build: { command: 'make', args: [] }, test: { command: 'make', args: ['test'] } },
   'Java / Maven': { build: { command: 'mvn', args: ['package', '-DskipTests'] }, test: { command: 'mvn', args: ['test'] } },
   'Java / Groovy / Gradle': { build: { command: 'gradle', args: ['build'] }, test: { command: 'gradle', args: ['test'] } },

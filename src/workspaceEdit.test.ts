@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyTextEdits, fileUriToPath, offsetAt, workspaceEditFiles } from './workspaceEdit.ts';
+import { applyTextEdits, confirmFileOperations, fileUriToPath, offsetAt, workspaceEditFiles, workspaceEditPlan } from './workspaceEdit.ts';
 
 const at = (line: number, character: number) => ({ line, character });
 const edit = (sl: number, sc: number, el: number, ec: number, newText: string) =>
@@ -63,8 +63,54 @@ test('a rename that also creates or deletes files is refused, not half-applied',
       { textDocument: { uri: 'file:///p/A.java', version: 1 }, edits: [edit(0, 0, 0, 1, 'B')] },
       { kind: 'rename', oldUri: 'file:///p/A.java', newUri: 'file:///p/B.java' },
     ] }),
-    /cannot do yet/i,
+    /creates, renames, or deletes/,
   );
+});
+
+test('a reviewed plan keeps create-then-edit order and refuses overwrite, escape, and folder delete', () => {
+  const plan = workspaceEditPlan({ documentChanges: [
+    { kind: 'create', uri: 'file:///p/New.java', options: { ignoreIfExists: true } },
+    { textDocument: { uri: 'file:///p/New.java', version: null }, edits: [edit(0, 0, 0, 0, 'class New {}\n')] },
+  ] });
+  assert.equal(plan[0].kind, 'create');
+  assert.deepEqual(plan[0], { kind: 'create', path: '/p/New.java', ignoreIfExists: true });
+  assert.equal(plan[1].kind, 'text');
+  if (plan[1].kind === 'text') assert.equal(plan[1].path, '/p/New.java');
+
+  assert.deepEqual(
+    workspaceEditPlan({ changes: { 'file:///C:/src/App.java': [edit(0, 0, 0, 1, 'x')] } }),
+    [{ kind: 'text', path: 'C:/src/App.java', edits: [edit(0, 0, 0, 1, 'x')] }],
+  );
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'create', uri: 'file:///p/A.java', options: { overwrite: true } }] }), /refuses to overwrite/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'rename', oldUri: 'file:///p/A.java', newUri: 'file:///p/B.java', options: { overwrite: true } }] }), /refuses to overwrite/);
+  assert.throws(() => workspaceEditPlan({ changes: { 'file:///p/../x.swift': [edit(0, 0, 0, 1, 'x')] } }), /leaves its folder/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'create', uri: 'file:///p//A.java' }] }), /leaves its folder/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'create', uri: 'file:///p/./A.java' }] }), /leaves its folder/);
+  assert.throws(() => workspaceEditPlan({ changes: { 'file:///': [edit(0, 0, 0, 1, 'x')] } }), /empty path/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'delete', uri: 'file:///C:/' }] }), /empty path/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'delete', uri: 'file:///p/A.java', options: { recursive: true } }] }), /not a folder/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'move', oldUri: 'file:///p/A.java' }] }), /unsupported file change/);
+  assert.throws(() => workspaceEditPlan({ documentChanges: [{ kind: 'create', uri: 'untitled:New.java' }] }), /Only files/);
+});
+
+test('file operations ask once and a decline changes nothing', () => {
+  const asked: string[] = [];
+  assert.throws(
+    () => confirmFileOperations([
+      { kind: 'create', path: '/p/A.java', ignoreIfExists: false },
+      { kind: 'rename', from: '/p/A.java', to: '/p/B.java' },
+      { kind: 'delete', path: '/p/Old.java' },
+    ], message => { asked.push(message); return false; }),
+    /not confirmed/,
+  );
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /Create \/p\/A\.java/);
+  assert.match(asked[0], /Rename \/p\/A\.java to \/p\/B\.java/);
+  assert.match(asked[0], /Delete \/p\/Old\.java/);
+  assert.doesNotThrow(() => confirmFileOperations([{ kind: 'delete', path: '/p/Old.java' }], () => true));
+  let called = false;
+  confirmFileOperations([], () => { called = true; return false; });
+  assert.equal(called, false);
 });
 
 test('non-file URIs are refused rather than written somewhere surprising', () => {

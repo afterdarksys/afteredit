@@ -2,6 +2,7 @@ pub mod service;
 mod shared_workspace;
 mod menu;
 mod apple;
+mod unix;
 mod browser;
 mod ai;
 mod ai_stream;
@@ -60,7 +61,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             menu::update_menu,
-            shared_workspace::service_start, shared_workspace::service_request,
+            shared_workspace::service_start, shared_workspace::service_request, shared_workspace::ssh_workspace_connect,
             pty::spawn_pty,
             pty::pty_write,
             pty::pty_confirm,
@@ -78,6 +79,7 @@ pub fn run() {
  formatter::format_source,formatter::list_formatters,formatter::formattable_languages,
             toolchain::inspect_tools,
             apple::apple_toolchain, apple::apple_projects, apple::apple_query, apple::apple_open,
+            unix::unix_toolchain, unix::unix_project, unix::unix_man, unix::unix_pkg_config,
             git::git_status, git::git_diff, git::git_stage, git::git_review_staged, git::git_commit,
             git::git_branches, git::git_checkout, git::git_fetch, git::git_pull, git::git_hunks, git::git_stage_hunk, git::git_push_preview, git::git_push,
             git::git_worktrees, git::git_worktree_add, git::git_worktree_remove, git::git_review_diff,
@@ -87,7 +89,7 @@ pub fn run() {
             workspace::list_directory,
             workspace::read_file, workspace::project_file_path, workspace::workspace_search,
             workspace::workspace_replace_preview, workspace::workspace_replace,
-            workspace::create_directory, workspace::rename_path, workspace::delete_path, workspace::watch_project,
+            workspace::create_directory, workspace::create_text_file, workspace::delete_text_file, workspace::rename_path, workspace::delete_path, workspace::watch_project,
             workspace::save_file,
             workspace::save_as,
             workspace::confirm_discard,
@@ -132,10 +134,11 @@ mod registration_tests {
         let end = start + lib[start..].find(']').expect("end of handler list");
         let handler = &lib[start..end];
 
-        let modules: [(&str, &str); 26] = [
+        let modules: [(&str, &str); 27] = [
             ("ai.rs", include_str!("ai.rs")),
             ("shared_workspace.rs", include_str!("shared_workspace.rs")),
             ("apple.rs", include_str!("apple.rs")),
+            ("unix.rs", include_str!("unix.rs")),
             ("browser.rs", include_str!("browser.rs")),
             ("dap.rs", include_str!("dap.rs")),
             ("context.rs", include_str!("context.rs")),

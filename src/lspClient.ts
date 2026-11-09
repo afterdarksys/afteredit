@@ -1,8 +1,8 @@
 import * as monaco from 'monaco-editor';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { ConnectedServer } from './languageServices';
-import { applyTextEdits, workspaceEditFiles, type FileEdits } from './workspaceEdit';
+import { decodeSemanticTokens, type ConnectedServer } from './languageServices';
+import { applyTextEdits, confirmFileOperations, fileUriToPath, workspaceEditPlan, type FileEdits, type FileOperation } from './workspaceEdit';
 const range=(r:any)=>new monaco.Range(r.start.line+1,r.start.character+1,r.end.line+1,r.end.character+1);
 const lspRange=(r:monaco.IRange)=>({start:{line:r.startLineNumber-1,character:r.startColumn-1},end:{line:r.endLineNumber-1,character:r.endColumn-1}});
 /** LSP SymbolKind is 1-based over the same list Monaco numbers from 0. */
@@ -24,7 +24,7 @@ const completionKind=(kind:number)=>COMPLETION_KINDS[(kind??1)-1]??monaco.langua
 const markdown=(value:any):string|undefined=>typeof value==='string'?value:value?.value;
 /** Command ids are global to Monaco, so each connection gets its own. */
 let connectionCount=0;
-export function connectModel(editor:monaco.editor.IStandaloneCodeEditor,path:string,server:ConnectedServer,onNavigate:(path:string,line:number)=>void,onError:(text:string)=>void,onWorkspaceEdit?:(files:FileEdits[])=>Promise<void>){
+export function connectModel(editor:monaco.editor.IStandaloneCodeEditor,path:string,server:ConnectedServer,onNavigate:(path:string,line:number)=>void,onError:(text:string)=>void,onWorkspaceEdit?:(files:FileEdits[])=>Promise<void>,onFileOperations?:(operations:FileOperation[])=>Promise<void>){
  const model=editor.getModel();if(!model)return ()=>{};
  const uri=monaco.Uri.file(path).toString();const disposables:monaco.IDisposable[]=[];let disposed=false;let version=1;
  const notify=(method:string,params:unknown)=>invoke('lsp_notify',{session:server.id,method,params});
@@ -62,22 +62,58 @@ export function connectModel(editor:monaco.editor.IStandaloneCodeEditor,path:str
   monaco.editor.setModelMarkers(model,`lsp-${server.id}`,published.map((d:any)=>({...range(d.range),message:d.message,severity:[monaco.MarkerSeverity.Error,monaco.MarkerSeverity.Warning,monaco.MarkerSeverity.Info,monaco.MarkerSeverity.Hint][(d.severity??1)-1]??monaco.MarkerSeverity.Info,source:d.source})));
  }).then(off=>{if(disposed)off();else disposables.push({dispose:off});}).catch(e=>onError(String(e)));
 
- /** Every multi-file change goes through here: the file on screen is edited in
-  *  place so Undo still works, and the rest are handed to the app as unsaved
-  *  buffers to review -- the same flow agent edits already use. Validation
-  *  runs before anything is written, so a bad edit set changes nothing. */
+ /** Every workspace edit goes through here, in the server's order. The open
+  *  file is edited in place so Undo still works, and its buffer is updated
+  *  first so a following rename does not keep the old text. Other files land
+  *  as unsaved buffers. File create, rename, and delete ask once, then run
+  *  one step at a time. A bad edit throws before that confirm. */
  const applyEdit=async(edit:unknown)=>{
-  const files=workspaceEditFiles(edit);
-  if(!files.length)return;
-  const here=files.filter(file=>file.path===path),elsewhere=files.filter(file=>file.path!==path);
-  if(elsewhere.length&&!onWorkspaceEdit)throw new Error(`This change also edits ${elsewhere.length} other file${elsewhere.length===1?'':'s'}, which this editor cannot apply. Nothing was changed.`);
-  // Throws on overlapping or backwards edits before a character is written.
-  for(const file of here)applyTextEdits(model.getValue(),file.edits);
-  if(elsewhere.length)await onWorkspaceEdit!(elsewhere);
-  for(const file of here){
-   editor.pushUndoStop();
-   editor.executeEdits('lsp',file.edits.map(e=>({range:range(e.range),text:e.newText})));
-   editor.pushUndoStop();
+  const plan=workspaceEditPlan(edit);
+  if(!plan.length)return;
+  const operations=plan.filter((step):step is FileOperation=>step.kind!=='text');
+  // Text-only refactors retain all-or-nothing validation across files.
+  if(!operations.length){
+   const files=plan.filter((step):step is Extract<typeof step,{kind:'text'}>=>step.kind==='text');
+   const here=files.filter(file=>file.path===path),elsewhere=files.filter(file=>file.path!==path);
+   if(elsewhere.length&&!onWorkspaceEdit)throw new Error('This build cannot apply edits to other files.');
+   let preview=model.getValue();
+   for(const file of here)preview=applyTextEdits(preview,file.edits);
+   if(elsewhere.length)await onWorkspaceEdit!(elsewhere);
+   for(const file of here){
+    editor.pushUndoStop();
+    editor.executeEdits('lsp',file.edits.map(e=>({range:range(e.range),text:e.newText})));
+    editor.pushUndoStop();
+   }
+   return;
+  }
+  let simulatedPath:string|null=path;
+  let simulated=model.getValue();
+  for(const step of plan){
+   if(step.kind==='text'){
+    if(step.path===simulatedPath)simulated=applyTextEdits(simulated,step.edits);
+    else if(!onWorkspaceEdit)throw new Error('This build cannot apply edits to other files.');
+   }else if(step.kind==='rename'&&simulatedPath===step.from)simulatedPath=null;
+   else if(step.kind==='delete'&&simulatedPath&&(simulatedPath===step.path||simulatedPath.startsWith(step.path+'/')||simulatedPath.startsWith(step.path+'\\')))simulatedPath=null;
+  }
+  if(operations.length&&!onFileOperations)throw new Error('This editor cannot apply file operations. Nothing was changed.');
+  confirmFileOperations(operations);
+  let editorPath:string|null=path;
+  for(const step of plan){
+   if(step.kind==='text'){
+    if(step.path===editorPath){
+     if(onWorkspaceEdit)await onWorkspaceEdit([{path:step.path,edits:step.edits}]);
+     editor.pushUndoStop();
+     editor.executeEdits('lsp',step.edits.map(e=>({range:range(e.range),text:e.newText})));
+     editor.pushUndoStop();
+    }else{
+     if(!onWorkspaceEdit)throw new Error('This build cannot apply edits to other files.');
+     await onWorkspaceEdit([{path:step.path,edits:step.edits}]);
+    }
+   }else{
+    await onFileOperations!([step]);
+    if(step.kind==='rename'&&editorPath===step.from)editorPath=null;
+    else if(step.kind==='delete'&&editorPath&&(editorPath===step.path||editorPath.startsWith(step.path+'/')||editorPath.startsWith(step.path+'\\')))editorPath=null;
+   }
   }
  };
 
@@ -167,5 +203,110 @@ export function connectModel(editor:monaco.editor.IStandaloneCodeEditor,path:str
   },
  }));
  if(server.capabilities.documentFormattingProvider)disposables.push(monaco.languages.registerDocumentFormattingEditProvider(server.language,{async provideDocumentFormattingEdits(candidate,options){if(candidate!==model)return [];try{const edits=await request('textDocument/formatting',{textDocument:{uri},options});return (edits??[]).map((e:any)=>({range:range(e.range),text:e.newText}));}catch(e){onError(String(e));return [];}}}));
+ const tokenLegend=server.capabilities.semanticTokensProvider?.legend;
+ const tokenTypes=tokenLegend?.tokenTypes;
+ const tokenModifiers=tokenLegend?.tokenModifiers;
+ const modifiersOk=!tokenModifiers||(Array.isArray(tokenModifiers)&&tokenModifiers.every((name:unknown)=>typeof name==='string'));
+ if(server.capabilities.semanticTokensProvider?.full&&Array.isArray(tokenTypes)&&tokenTypes.length>0&&tokenTypes.every((name:unknown)=>typeof name==='string')&&modifiersOk){
+  const legend={tokenTypes:tokenTypes as string[],tokenModifiers:(tokenModifiers??[]) as string[]};
+  disposables.push(monaco.languages.registerDocumentSemanticTokensProvider(server.language,{
+   getLegend:()=>legend,
+   async provideDocumentSemanticTokens(candidate,_lastResultId,token){
+    if(candidate!==model||token.isCancellationRequested)return {data:new Uint32Array()};
+    try{
+     const data=await request('textDocument/semanticTokens/full',{textDocument:{uri}});
+     if(token.isCancellationRequested)return {data:new Uint32Array()};
+     const decoded=decodeSemanticTokens(data);
+     if(!decoded){onError('The language server sent semantic tokens AfterEdit will not paint.');return {data:new Uint32Array()};}
+     return {data:decoded};
+    }catch(e){onError(String(e));return {data:new Uint32Array()};}
+   },
+   releaseDocumentSemanticTokens(){},
+  }));
+ }
+ if(server.capabilities.inlayHintProvider)disposables.push(monaco.languages.registerInlayHintsProvider(server.language,{
+  async provideInlayHints(candidate,hintRange,token){
+   const empty={hints:[],dispose(){}};
+   if(candidate!==model||token.isCancellationRequested)return empty;
+   try{
+    const data=await request('textDocument/inlayHint',{textDocument:{uri},range:lspRange(hintRange)});
+    if(token.isCancellationRequested)return empty;
+    const list=Array.isArray(data)?data:[];
+    if(list.length>2000){onError('The language server sent too many inlay hints to show.');return empty;}
+    const hints=list.flatMap((hint:any)=>{
+     const line=hint?.position?.line,character=hint?.position?.character;
+     if(typeof line!=='number'||typeof character!=='number')return [];
+     const label=typeof hint.label==='string'?hint.label:Array.isArray(hint.label)?hint.label.map((part:any)=>typeof part?.value==='string'?part.value:'').join(''):'';
+     if(!label)return [];
+     const item:monaco.languages.InlayHint={label,position:{lineNumber:line+1,column:character+1},paddingLeft:!!hint.paddingLeft,paddingRight:!!hint.paddingRight};
+     if(hint.kind===1)item.kind=monaco.languages.InlayHintKind.Type;
+     else if(hint.kind===2)item.kind=monaco.languages.InlayHintKind.Parameter;
+     const tooltip=typeof hint.tooltip==='string'?hint.tooltip:hint.tooltip?.value;
+     if(typeof tooltip==='string')item.tooltip=tooltip;
+     return [item];
+    });
+    return {hints,dispose(){}};
+   }catch(e){onError(String(e));return empty;}
+  },
+ }));
+ const hierarchyItem=(item:any)=>{
+  try{
+   const file=fileUriToPath(String(item?.uri??''));
+   if(!item?.name)return null;
+   const start=item.selectionRange?.start??item.range?.start;
+   return {name:String(item.name),path:file,line:(start?.line??0)+1};
+  }catch{return null;}
+ };
+ const take=(nodes:any[]|null|undefined,pick:(node:any)=>any)=>{
+  const items:{name:string;path:string;line:number}[]=[];
+  for(const node of nodes??[]){
+   const item=hierarchyItem(pick(node));
+   if(!item)continue;
+   items.push(item);
+   if(items.length>=40)break;
+  }
+  return items;
+ };
+ const publish=(title:string,groups:{heading:string;items:{name:string;path:string;line:number}[]}[])=>{
+  window.dispatchEvent(new CustomEvent('afteredit:hierarchy',{detail:{path,title,groups}}));
+ };
+ if(server.capabilities.callHierarchyProvider){
+  const action=editor.addAction({id:'afteredit.callHierarchy',label:'Call hierarchy',run:async()=>{
+   try{
+    const position=editor.getPosition();if(!position)return;
+    const prepared=await request('textDocument/prepareCallHierarchy',parameters(position));
+    const root=Array.isArray(prepared)?prepared[0]:prepared;
+    if(!root){publish('Call hierarchy',[]);return;}
+    const [incoming,outgoing]=await Promise.all([
+     request('callHierarchy/incomingCalls',{item:root}),
+     request('callHierarchy/outgoingCalls',{item:root}),
+    ]);
+    publish('Call hierarchy',[
+     {heading:'Incoming',items:take(incoming,node=>node.from)},
+     {heading:'Outgoing',items:take(outgoing,node=>node.to)},
+    ]);
+   }catch(e){onError(String(e));}
+  }});
+  disposables.push(action);
+ }
+ if(server.capabilities.typeHierarchyProvider){
+  const action=editor.addAction({id:'afteredit.typeHierarchy',label:'Type hierarchy',run:async()=>{
+   try{
+    const position=editor.getPosition();if(!position)return;
+    const prepared=await request('textDocument/prepareTypeHierarchy',parameters(position));
+    const root=Array.isArray(prepared)?prepared[0]:prepared;
+    if(!root){publish('Type hierarchy',[]);return;}
+    const [supertypes,subtypes]=await Promise.all([
+     request('typeHierarchy/supertypes',{item:root}),
+     request('typeHierarchy/subtypes',{item:root}),
+    ]);
+    publish('Type hierarchy',[
+     {heading:'Supertypes',items:take(supertypes,node=>node)},
+     {heading:'Subtypes',items:take(subtypes,node=>node)},
+    ]);
+   }catch(e){onError(String(e));}
+  }});
+  disposables.push(action);
+ }
  return ()=>{disposed=true;disposables.forEach(d=>d.dispose());monaco.editor.setModelMarkers(model,`lsp-${server.id}`,[]);void sync.then(()=>notify('textDocument/didClose',{textDocument:{uri}})).catch(()=>{});};
 }

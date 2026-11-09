@@ -170,6 +170,41 @@ pub(crate) fn service_start(state:&LspState,root:std::path::PathBuf,command:Stri
             .to_string(),
     })
 }
+/// Methods the editor and the shared CLI may send. This is an allowlist:
+/// an unknown method is an error, not a pass-through to the server.
+/// `textDocument/semanticTokens/full/delta` is omitted on purpose; the editor
+/// always requests a full token set.
+pub(crate) fn lsp_method_allowed(method: &str) -> bool {
+    const METHODS: &[&str] = &[
+        "initialize",
+        "shutdown",
+        "workspace/symbol",
+        "workspace/executeCommand",
+        "textDocument/completion",
+        "textDocument/hover",
+        "textDocument/definition",
+        "textDocument/typeDefinition",
+        "textDocument/implementation",
+        "textDocument/declaration",
+        "textDocument/references",
+        "textDocument/documentSymbol",
+        "textDocument/signatureHelp",
+        "textDocument/codeAction",
+        "codeAction/resolve",
+        "textDocument/prepareRename",
+        "textDocument/rename",
+        "textDocument/formatting",
+        "textDocument/semanticTokens/full",
+        "textDocument/inlayHint",
+        "textDocument/prepareCallHierarchy",
+        "callHierarchy/incomingCalls",
+        "callHierarchy/outgoingCalls",
+        "textDocument/prepareTypeHierarchy",
+        "typeHierarchy/supertypes",
+        "typeHierarchy/subtypes",
+    ];
+    METHODS.contains(&method)
+}
 #[tauri::command]
 pub async fn lsp_request(
     state: tauri::State<'_, LspState>,
@@ -177,16 +212,7 @@ pub async fn lsp_request(
     method: String,
     params: Value,
 ) -> Result<Value, String> {
-    if ![
-        "initialize",
-        "shutdown",
-        "textDocument/hover",
-        "textDocument/completion",
-        "textDocument/definition",
-        "textDocument/formatting",
-    ]
-    .contains(&method.as_str())
-    {
+    if !lsp_method_allowed(&method) {
         return Err("Unsupported LSP request".into());
     }
     let server = state
@@ -263,6 +289,43 @@ mod tests {
         ] {
             assert!(read_message(&mut std::io::Cursor::new(bytes)).is_err());
         }
+    }
+    #[test]
+    fn lsp_methods_are_an_explicit_allowlist() {
+        for method in [
+            "initialize",
+            "shutdown",
+            "workspace/symbol",
+            "workspace/executeCommand",
+            "textDocument/completion",
+            "textDocument/hover",
+            "textDocument/definition",
+            "textDocument/typeDefinition",
+            "textDocument/implementation",
+            "textDocument/declaration",
+            "textDocument/references",
+            "textDocument/documentSymbol",
+            "textDocument/signatureHelp",
+            "textDocument/codeAction",
+            "codeAction/resolve",
+            "textDocument/prepareRename",
+            "textDocument/rename",
+            "textDocument/formatting",
+            "textDocument/semanticTokens/full",
+            "textDocument/inlayHint",
+            "textDocument/prepareCallHierarchy",
+            "callHierarchy/incomingCalls",
+            "callHierarchy/outgoingCalls",
+            "textDocument/prepareTypeHierarchy",
+            "typeHierarchy/supertypes",
+            "typeHierarchy/subtypes",
+        ] {
+            assert!(lsp_method_allowed(method), "{method}");
+        }
+        assert!(!lsp_method_allowed("textDocument/semanticTokens/full/delta"));
+        assert!(!lsp_method_allowed("workspace/applyEdit"));
+        assert!(!lsp_method_allowed("workspace/executeCommand\n"));
+        assert!(!lsp_method_allowed(""));
     }
 }
 
@@ -375,7 +438,7 @@ mod integration_tests {
 }
 
 pub(crate) fn service_request(state:&LspState,id:u64,method:&str,params:Value)->Result<Value,String>{
- if !["initialize","shutdown","workspace/symbol","textDocument/documentSymbol","textDocument/completion","textDocument/hover","textDocument/definition","textDocument/references","textDocument/rename","textDocument/formatting","textDocument/codeAction"].contains(&method){return Err("Unsupported LSP method".into());}
+ if !lsp_method_allowed(method){return Err("Unsupported LSP method".into());}
  let server=state.sessions.lock().map_err(|e|e.to_string())?.get(&id).cloned().ok_or("Language server is not connected")?;
  server.request(method.into(),params)
 }
